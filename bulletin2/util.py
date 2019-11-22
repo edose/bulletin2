@@ -28,17 +28,67 @@ VSX_DELIMITER = '@@@'  # NB: ',' fails as obsName values already have a comma.
 MIN_MAG = 0.1  # magnitudes must be greater than this numeric value (mostly to remove zeroes).
 MAX_MAG = 20.0  # maximum reasonable magnitude numeric value (subject to later revision for meter scopes).
 
+# =====================================================================================================
+#
+#     bulletin2
+#
+#     Demonstration code for an online replacement and extension of AAVSO's venerable LPV Bulletins.
+#
+#     Motivation: For all the 379 LPV (long-period variable) stars in Bulletin 2018, we want
+#     to predict the following:
+#         * minimum and maximum dates and their approximate V-mags during next calendar year,
+#         * approximate V-mags ON DEMAND, for any star and date, presumably from a future web tool, and
+#         * ideally, bonus predictions (dates, V-mags) for the entire next year of any star's:
+#                   * extremely fast mag changes, and
+#                   * lightcurve fine structure
+#                in order to help observers better define the light curve over the next year.
+#
+#    The lightcurve model adopted here is second-order Fourier with first-order linear drift,
+#        which results in 6 fitted parameters. More recent observations are weighted more heavily as
+#        they are certainly more relevant (per obs) to next-year predictions.
+
+#    Because the LPV period is a highly non-linear parameter, we fit it indirectly and approximately.
+#        Even so, initial experiments indicate that when a LPV's period deviates from the historical
+#        by more than perhaps 5%, this can be detected. If this result holds, each such star should be
+#        marked as a special target for its next maximum and minimum.
+#
+#                                         ---------------
+#
+#    Note: A severe requirement imposed on this demonstration is: for predictions over the year 2019,
+#        only data through November 30, 2018 can be used in fitting. This is similar to the real-world
+#        requirement when previous Bulletins were produced once annually (for the following calendar year).
+#
+#        However, this restriction is far more severe than would be encountered by an online tool,
+#        because any online tool would have the advantage of using more recent data.
+#
+#    For example, previous Bulletins were produced annually, and thus needed to project minima and maxima
+#        up to 13 months in advance. However, an online tool would have direct access to recent
+#        observations, and if supporting least-squares fits were run only monthly, they would then need
+#        to project magnitudes up to 2 months in advance; if fits were run more often,
+#        the projections would be even less distant.
+#
+#    So the present experiment is required to project magnitudes into far more distant dates than
+#        any online tool would need to do. Thus, if the current projection approach can work, a less
+#        restrictive approach should certainly work well to support an online Bulletin tool.
+#
+#
+#                                           offered by
+#                                           Eric Dose, Albuquerque, NM USA
+#                                           in support of the American Assoc. of Variable Star Observers
+#
+# =====================================================================================================
+
 
 @functools.lru_cache(maxsize=128, typed=False)
 def get_vsx_obs(star_id, jd_start, jd_end=None):
     """
-    Downloads observations from AAVSO's webobs for ONE star, returns dataframe of results.
-       If star not in AAVSO's webobs site, return a dataframe with no rows.
-       Columns: target_name, date_string, filter, observer, jd, mag, error.
-    :param star_id: the STAR id (not the fov's name).
-    :param jd_start: optional Julian date.
-    :param jd_end: optional JD.
-    :return: DataFrame containing data for 1 star, 1 row per observation downloaded,
+    Downloads observations from AAVSO's webobs/VSX for ONE star, returns dataframe of results.
+       If star not in AAVSO's AID, return a dataframe with no rows.
+       Return columns: target_name, date_string, filter, observer, jd, mag, error.
+    :param star_id: the STAR id (not the fov's name) [string].
+    :param jd_start: optional Julian date [float].
+    :param jd_end: optional JD [float].
+    :return: DataFrame containing data for 1 star; 1 row per observation downloaded,
         (or None if there was some problem).
     """
     # Construct required URL:
@@ -70,24 +120,24 @@ def get_vsx_obs(star_id, jd_start, jd_end=None):
 
 
 def capture_vsx_data():
-    """  From VSX API, capture test data from VSX API, make 2 dataframes:
-            df_obs, with one row per (screened & weighted) observation, and
-            df_stars, with one row per star, holding summary data for that star.
+    """  From VSX API, capture test data from VSX API, make a dataframe and write it to .csv file.
+            Dataframe is df_obs; with one row per (screened & weighted) observation.
         Write these dataframes locally as .csv files, for use in testing magnitude-projection model(s).
-        The idea is to get this data one time, holding it locally in csv files,
-        thus saving us testing time, and saving AAVSO server time.
-    :return:
+        The idea is to get this data just one time and then store it locally for repeated use,
+        saving us testing time, and saving AAVSO server time.
+    :return: [None] ... rather, dataframe is written to [DF_OBS_FILENAME] in [DATA_DIRECTORY].
     """
     df_obs = pd.DataFrame()  # master dataframe of all obs and metadata, to be written to local .csv file.
     # df_stars = pd.DataFrame()  # summary data, one row per star (we may end up not needing this).
 
-    star_names = get_bulletin_star_names()
+    star_ids = get_bulletin_star_ids()
     df_bulletin = get_df_bulletin()
-    for name in star_names:
-        period = float(df_bulletin.loc[name, 'PERIOD'])
-        jd_end = jd_now()  # collect all obs through 2019 as well (2019 obs to evaluate predictions).
+    jd_end = jd_now()  # collect all obs through 2019 as well (2019 obs to evaluate predictions).
+
+    for star_id in star_ids:
+        period = float(df_bulletin.loc[star_id, 'PERIOD'])
         jd_start = jd_from_datetime_utc(FIT_END_DATE) - FIT_PERIODS_TO_CAPTURE * period
-        df_vsx = get_vsx_obs(name, jd_start=jd_start, jd_end=jd_end)
+        df_vsx = get_vsx_obs(star_id, jd_start=jd_start, jd_end=jd_end)
         print('   ', str(len(df_vsx)), 'obs downloaded from VSX for JD range:',
               str(int(jd_start)), 'to', str(int(jd_end)) + ':')
         df_screened = screen_star_obs(df_vsx)
@@ -103,9 +153,14 @@ def capture_vsx_data():
 
 
 def screen_star_obs(df):
-    """  Screen observations for quality and relevance to V-band magnitude projection.
-    :param df: this star's unscreened observations [pandas DataFrame].
-    :return: this star's screened observations [pandas DataFrame].
+    """  Screen observations (in df_obs) for quality and relevance to V-band magnitude projection.
+         Remove observations (df_obs rows) that do not qualify for use in projecting future magnitudes.
+         Requirements to keep an observation (row) include:
+            Band (filter) being one of: V (CCD V filter), 'Vis.' (visual obs), or 'TG' (V-like);
+            Having a reasonable magnitude that is neither null nor a less-than report,
+            Validation being either full or provisional.
+    :param df: this star's unscreened observations (probably df_obs) [pandas DataFrame].
+    :return: this star's screened observations [smaller pandas DataFrame].
     """
     mag_not_null = ~ df['mag'].isnull()
     df = df[mag_not_null]
@@ -114,49 +169,33 @@ def screen_star_obs(df):
     not_fainter_than = df['fainterThan'] == '0'
     obstype_ok = df['obsType'].isin(['Visual', 'CCD', 'DSLR', 'VISDIG'])
     validation_ok = df['val'].isin(['V', 'Z'])
+
     obs_to_keep = mag_value_ok & band_not_v_like & not_fainter_than & obstype_ok & validation_ok
     df = df[obs_to_keep]
     return df
 
 
 def add_obs_weights(df):
-    """  Double the weights for all transformed (CCD) observations,
-         relative to all other observations.
-    :param df: this star's screened observations [pandas DataFrame]
-    :return: same dataframe with added column 'weight' [pandas DataFrame].
+    """  Double the fitting weight for each transformed CCD V observation, relative to other observations.
+    :param df: this star's screened observations [pandas DataFrame].
+    :return: Dataframe with added column 'weight' but otherwise unchanged [pandas DataFrame].
     """
     weights = [2.0 if tr == '1' else 1.0 for tr in df['transformed']]
-    # Next line removed, as validation seems to happen only for Visual data (why??),
-    #    and thus columns 'val' and 'transformed' are overly correlated.
-    # weights = [0.5 * wt if val == 'Z' else wt for (wt, val) in zip(weights, df['val'])]
     df.loc[:, 'weight'] = weights
     return df
 
 
-def get_bulletin_star_names(path=None):
-    """  Read file Bulletin2018.csv and extract star names only.
-    :param path: exactly where to find file Bulletin2018.csv [string].
-    :return: all star names in AAVSO Bulletin 2018, order left unchanged from the csv file.
-    """
-    if path is None:
-        path = os.path.join(DATA_DIRECTORY, BULLETIN2018_FILENAME)
-    with open(path) as f:
-        lines = f.readlines()
-    raw_star_names = [line.split(',')[0].strip().upper() for line in lines]
-    star_names = [n for n in raw_star_names if n not in ['NAME', '']]
-    return star_names
-
-
-def get_df_bulletin(path=None):
-    if path is None:
-        path = os.path.join(DATA_DIRECTORY, BULLETIN2018_FILENAME)
-    df_bulletin = pd.read_csv(path, sep=',', encoding="UTF-8", na_filter=False)
-    df_bulletin = df_bulletin[df_bulletin['NAME'] != 'NAME']
-    df_bulletin = df_bulletin.set_index('NAME', drop=False)
-    return df_bulletin
-
-
 def make_df_x(jd_list, fit_period, jd0=JD0):
+    """  Given a list of JDs and other input data, deliver a dataframe ready to use as X-value
+         (independent variable) input to a regression function; one column per variable, one row per obs.
+    :param jd_list: list of Julian date values to use in fitting observed magnitudes or in predicting
+               magnitudes for new JDs.
+    :param fit_period: the LPV period in days to *assume* in the fit (may differ from Bulletin P) [float].
+    :param jd0: Reference Julian Date to use in constructing dataframe. Has two effects:
+               (1) the fitted v_const parameter value will represent the projected mag at this date, and
+               (2) all phases will use this date as to establish zero phase.
+    :return: small dataframe with required X-value data [pandas Dataframe].
+    """
     df_x = pd.DataFrame()
     df_x['v_const'] = len(jd_list) * [1.0]  # ca. the mean V mag
     df_x['dv_year'] = [(jd - jd0) / DAYS_PER_YEAR for jd in jd_list]  # linear drift in V mag per year.
@@ -168,15 +207,27 @@ def make_df_x(jd_list, fit_period, jd0=JD0):
     return df_x, jd0
 
 
-def fit_one_star(star_name, df_obs=None, df_bulletin=None, period_factor=1.0, jd0=JD0):
-    # Ensure that we have the required observation and star data:
+def fit_one_star(star_id, df_obs=None, df_bulletin=None, period_factor=1.0, jd0=JD0):
+    """ The kernel & fitting engine.
+        Arranges input data and performs weighted least-squares (via statsmodels WLS function),
+        returns the entire WLS results object, as well as the JD0 reference JD used
+        (as required for future interpretation of the fit results).
+    :param star_id: the STAR id, as NAME in Bulletin 2018 [string].
+    :param df_obs:this star's fully screened observations [pandas DataFrame].
+    :param df_bulletin: data from LPV Bulletin (probably via get_df_bulletin()) [pandas Dataframe].
+    :param period_factor: the factor by which to multiply Bulletin's period when performing fit [float].
+    :param jd0: reference Julian Date, required when performing and using fit [float].
+    :return: (result, jd0), where result is a RegressionResult object from python's statsmodel package,
+             and jd0 is the *actual* jd0 reference JD needed to interpret or use those results [2-tuple].
+    """
+    # First, ensure that we have the required observation and star data:
     if df_obs is None:
         df_obs = get_local_df_obs()
     if df_bulletin is None:
         df_bulletin = get_df_bulletin()
 
     # Prepare dataframe for this star:
-    df = df_obs[df_obs['starName'] == star_name]
+    df = df_obs[df_obs['starName'] == star_id]
     df = df[['JD', 'band', 'mag', 'obsID', 'obsType', 'weight']]
     df['JD'] = [float(jd) for jd in df['JD']]  # because strings are inherited from VSX.
     df['mag'] = [float(mag) for mag in df['mag']]  # because strings are inherited from VSX.
@@ -184,14 +235,14 @@ def fit_one_star(star_name, df_obs=None, df_bulletin=None, period_factor=1.0, jd
     df = df.sort_values(by='JD')
 
     # Get variable-star period from 2018 Bulletin, then set the period actually used in this fit:
-    bulletin_period = float(df_bulletin.loc[star_name, 'PERIOD'])
+    bulletin_period = float(df_bulletin.loc[star_id, 'PERIOD'])
     this_fit_period = period_factor * bulletin_period  # because best period may differ from bulletin's.
 
     # Prepare dataframes for weighted multivariate regression fit:
     df_jd = pd.DataFrame()
     df_jd['JD'] = df.copy()['JD']
     df_jd.index = df.index
-    df_x, jd0 = make_df_x(df['JD'], this_fit_period)
+    df_x, jd0 = make_df_x(df['JD'], this_fit_period, jd0)
     df_x.index = df.index
     df_y = pd.DataFrame()
     df_y['y'] = df.copy()['mag']
@@ -208,28 +259,22 @@ def fit_one_star(star_name, df_obs=None, df_bulletin=None, period_factor=1.0, jd
     df_x = df_x[to_keep]
     df_y = df_y[to_keep]
     df_wt = df_wt[to_keep]
-    # The following commented-out lines are reserved in case we need to fit shifts between V, Vis., etc:
+    # In case we later need to fit consistent shifts between observed magnitudes in V, Vis., etc:
     # df_fit['dvis'] = [1.0 if obsType == 'Vis.' else 0.0
     #     for obsType in df_fit['obsType']]  # pseudo-categorical.
     # df_fit['dtg'] = [1.0 if obsType == 'TG' else 0.0 for obsType in df_fit['obsType']]  # "
     # df_fit['dvisdig'] = [1.0 if obsType == 'VISDIG' else 0.0 for obsType in df_fit['obsType']]  # "
 
-    # For each obs within most recent period, double its pre-existing weight:
+    # For each observation falling within most recent LPV period, double that obs' pre-existing weight:
     days_before_jd_end = jd_end - df_jd['JD']
     weights = [2.0 * wt if db <= this_fit_period else 1.0 * wt
                for (wt, db) in zip(df_wt['weight'], days_before_jd_end)]
 
-    # Do fit:
-    # for weighted regression we'll want sm.WLS rather than OLS (ordinary least squares).
-    # result = sm.OLS(df_y, sm.add_constant(df_x)).fit()
-    result = sm.WLS(df_y, df_x, weights).fit()
-
-    # Calculate first-order amplitude:
-    # amplitude_1 = sqrt(result.params[2]**2 + result.params[3]**2)
+    result = sm.WLS(df_y, df_x, weights).fit()  # do the fit.
 
     # print(result.summary())
 
-    # Predict V magnitude for periodic dates:
+    # Predict V magnitude for periodic dates (construct a new function from move this code block, later):
     # jd_start = jd_from_datetime_utc(
     #     datetime(2019, 1, 1, 0, 0, 0).replace(tzinfo=timezone.utc))  # Jan 1 2019  00:00 utc
     # jds_to_predict = [jd_start + 10 * i for i in range(37)]  # 10-day spacing through all of 2019.
@@ -239,18 +284,34 @@ def fit_one_star(star_name, df_obs=None, df_bulletin=None, period_factor=1.0, jd
     #     print(jd, pred)
     # return list(zip(jds_to_predict, prediction))
 
-    return result, jd0  # to examine for data to store in df_fit_results.
+    return result, jd0
 
 
-def process_one_star(star_name, df_obs=None, df_bulletin=None, jd0=JD0, quiet=False):
-    if star_name not in df_bulletin.index:
-        print(' >>>>> Star', star_name, 'is not in the 2018 Bulletin.')
+def process_one_star(star_id, df_obs=None, df_bulletin=None, jd0=JD0, quiet=False):
+    """  Fully process (comprehensive fit) one star.
+         Calls fit_one_star() multiple times with various trial periods, to:
+             (1) better fit most recent obs, if Bulletin period does not apply to them exactly, and
+             (2) signal AAVSO and future online Bulletin facility that period appears to be changing.
+         Returns a python dictionary with all the data that will be needed to  construct one row
+             (representing this star's fitted behaviour) in a summary dataframe.
+    :param star_id: the STAR id, as NAME in Bulletin 2018 [string].
+    :param df_obs:this star's fully screened observations [pandas DataFrame].
+    :param df_bulletin: data from LPV Bulletin (probably via get_df_bulletin()) [pandas Dataframe].
+    :param jd0: reference Julian Date, required when performing and using fit [float].
+    :param quiet: True=suppress printed updates; False=print them (e.g. when running manually) [boolean].
+    :return: a dictionary of all relevant results of a weighted LS fit on one star [python dict object],
+             e.g., result_dict['params'] contains fitted parameter values, and results_dict['fit_result']
+             contains the entire RegressionResult object needed (with JD0) to perform predictions from
+             the fitted WLS model of magnitudes from any JD, or list of JDs.
+    """
+    if star_id not in df_bulletin.index:
+        print(' >>>>> Star', star_id, 'is absent from the 2018 Bulletin.')
         return None
-    bulletin_period = float(df_bulletin.loc[star_name, 'PERIOD'])
+    bulletin_period = float(df_bulletin.loc[star_id, 'PERIOD'])
     fit_factors = [0.9, 1.0, 1.1]  # these must be evenly spaced.
     all_results = []
     for fit_factor in fit_factors:
-        result, jd0 = fit_one_star(star_name, df_obs, df_bulletin, period_factor=fit_factor, jd0=jd0)
+        result, jd0 = fit_one_star(star_id, df_obs, df_bulletin, period_factor=fit_factor, jd0=jd0)
         all_results.append(result)
     if not quiet:
         for i, result in enumerate(all_results):
@@ -269,7 +330,7 @@ def process_one_star(star_name, df_obs=None, df_bulletin=None, jd0=JD0, quiet=Fa
             # Period seems to be within range, so we will use the interpolated period:
             best_period = best_fit_factor * bulletin_period
             period_sign = '~'
-            best_result, jd0 = fit_one_star(star_name, df_obs, df_bulletin,
+            best_result, jd0 = fit_one_star(star_id, df_obs, df_bulletin,
                                             period_factor=best_fit_factor, jd0=jd0)
             best_r_squared = best_result.rsquared
         elif best_fit_factor < x1:
@@ -285,7 +346,7 @@ def process_one_star(star_name, df_obs=None, df_bulletin=None, jd0=JD0, quiet=Fa
             best_r_squared = all_results[2].rsquared
             best_result = all_results[2]
     else:
-        # R^2 curve is concave up, so simply take the highest R^2 and mark with sign of uncertainty:
+        # Here, R^2 vs period is concave up, so just take the highest R^2, mark with uncertainty sign:
         r2_list = [all_results[i].rsquared for i in range(3)]
         i_max = r2_list.index(max(r2_list))
         best_period = fit_factors[i_max] * bulletin_period
@@ -294,14 +355,14 @@ def process_one_star(star_name, df_obs=None, df_bulletin=None, jd0=JD0, quiet=Fa
         best_result = all_results[i_max]
 
     if not quiet:
-        print(star_name.ljust(16), '   Best: ',
+        print(star_id.ljust(16), '   Best: ',
               '   factor' + period_sign + '{0:.3f}'.format(best_period / bulletin_period),
               '   P=' + '{0:.1f}'.format(best_period),
               '   R^2=' + '{0:.3f}'.format(best_r_squared))
 
-    # Make results to return to calling function:
+    # Make dictionary of results to return to calling function:
     amplitude_1 = 2.0 * sqrt(best_result.params['sin1']**2 + best_result.params['cos1']**2)
-    result_dict = {'star_name': star_name,
+    result_dict = {'star_id': star_id,
                    'nobs': best_result.nobs,
                    'period_sign': period_sign,
                    'bulletin_period': bulletin_period,
@@ -319,6 +380,13 @@ def process_one_star(star_name, df_obs=None, df_bulletin=None, jd0=JD0, quiet=Fa
 
 
 def process_all_stars(df_obs=None, df_bulletin=None, jd0=JD0):
+    """  Calls process_one_star() for each Bulletin star, then makes a dataframe holding all fit data.
+    :param df_obs:this star's fully screened observations [pandas DataFrame].
+    :param df_bulletin: data from LPV Bulletin (probably via get_df_bulletin()) [pandas Dataframe].
+    :param jd0: reference Julian Date, required when performing and using fit [float].
+    :return: dataframe of all fit data; this is enough to perform model predictions for any Bulletin star
+                 at any desired Julian Date, future or past [pandas DataFrame].
+    """
     if df_obs is None:
         df_obs = get_local_df_obs()
     if df_bulletin is None:
@@ -327,7 +395,7 @@ def process_all_stars(df_obs=None, df_bulletin=None, jd0=JD0):
     star_names = df_bulletin['NAME']
 
     for star_name in star_names[0:5]:
-        result_dict = process_one_star(star_name, df_obs, df_bulletin, jd0=JD0, quiet=True)
+        result_dict = process_one_star(star_name, df_obs, df_bulletin, jd0=jd0, quiet=True)
         result_dict_list.append(result_dict)
         print(star_name.ljust(8),
               '{0:.3f}'.format(result_dict['r_squared']),
@@ -337,12 +405,43 @@ def process_all_stars(df_obs=None, df_bulletin=None, jd0=JD0):
     return df_fit_results
 
 
-
-
 SUPPORT_________________________________________________ = 0
 
 
+def get_bulletin_star_ids(path=None):
+    """  Read file Bulletin2018.csv and extract star names only.
+         (faster than reading in entire df_bulletin Dataframe for 'NAME' column, if names alone are needed)
+    :param path: exactly where to find file Bulletin2018.csv (default is usually correct) [string].
+    :return: all star names in AAVSO Bulletin 2018, order left unchanged from the csv file [list of strings]
+    """
+    if path is None:
+        path = os.path.join(DATA_DIRECTORY, BULLETIN2018_FILENAME)
+    with open(path) as f:
+        lines = f.readlines()
+    possible_star_ids = [line.split(',')[0].strip().upper() for line in lines]
+    star_ids = [n for n in possible_star_ids if n not in ['NAME', '']]
+    return star_ids
+
+
+def get_df_bulletin(path=None):
+    """  Delivers dataframe df_bulletin containing all data in a .csv file (usually Bulletin2018.csv).
+    :param path: exactly where to find file Bullfile Bulletin2018.csv (default is usually correct) [string].
+    :return: df_bulletin [pandas Dataframe]
+    """
+    if path is None:
+        path = os.path.join(DATA_DIRECTORY, BULLETIN2018_FILENAME)
+    df_bulletin = pd.read_csv(path, sep=',', encoding="UTF-8", na_filter=False)
+    df_bulletin['NAME'] = [name.strip().upper() for name in df_bulletin['NAME']]
+    df_bulletin = df_bulletin[df_bulletin['NAME'] not in ['NAME', '']]
+    df_bulletin = df_bulletin.set_index('NAME', drop=False)
+    return df_bulletin
+
+
 def get_local_df_obs():
+    """  Make df_obs from locally stored .csv file. Avoids need to query VSX for observation data every
+         time they are needed.
+    :return: dataframe of VSX observation data stored in local .csv file [pandas Dataframe].
+    """
     fullpath = os.path.join(DATA_DIRECTORY, DF_OBS_FILENAME)
     if os.path.exists(fullpath):
         df_obs = pd.read_csv(fullpath, sep=';', encoding="UTF-8", na_filter=False)
@@ -383,35 +482,3 @@ def jd_now():
     :return: Julian date for immediate present per system clock [float].
     """
     return jd_from_datetime_utc(datetime.now(timezone.utc))
-
-
-DETRITUS________________________________________ = 0
-
-# def get_obs_one_star(star_id, num_obs=200, jd_start=EARLIEST_FIRST_JD, jd_end=None):
-#     """  Return a dataframe with all WebObs observations for 1 star, 1 row per observation downloaded.
-#          Adapted from photrix.get_aavso_raw_table().
-#          If no observations, return dataframe with no rows.
-#     :param star_id: the STAR id [string].
-#     :param jd_start: optional Julian date, default = January 1 2015. [float].
-#     :param jd_end: optional JD, default = now [float].
-#     :return: WebObs observation data for 1 star, 1 row per obs [pandas Dataframe].
-#     """
-#     safe_star_name = star_id.replace("+", "%2B").replace(" ", "+")
-#     url = "https://www.aavso.org/apps/webobs/results/?star=" + safe_star_name + "&obs_types=vis+ccd+dslr"
-#     if jd_start is not None:
-#         url += "&start=" + str(jd_start)
-#     if jd_end is not None:
-#         url += "&end=" + str(jd_end)
-#     # TODO: Try to use requests Session objects, for performance.
-#     # print('get_aavso_webobs_raw_table() >' + url + '<')
-#     r = requests.get(url)
-#     obs_list = []
-#     if r.status_code == HTTP_OK_CODE:
-#         soup = BeautifulSoup(r.text, 'html.parser')
-#         obs_lines = soup.find_all('tr', class_='obs')  # NB: "class_" not "class" (reserved).
-#         for line in obs_lines:
-#             cells = line.find_all('td')
-#             cell_strings = [cell.text for cell in cells]
-#             obs_list.append(cell_strings)
-#     df = pd.DataFrame(obs_list)
-#     return df
