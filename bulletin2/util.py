@@ -2,10 +2,9 @@ import functools
 from datetime import datetime, timezone, timedelta
 import os
 from math import sin, cos, pi, sqrt
-# import numpy as np
+from collections import OrderedDict
+
 import pandas as pd
-# import requests
-# from bs4 import BeautifulSoup
 import urllib.request
 import statsmodels.api as sm
 
@@ -20,6 +19,9 @@ NEW_BULLETIN_HEADER = ['NAME', 'RA.HOUR', 'RA.MIN', 'RA.SEC', 'DECL.DEG', 'DECL.
                        'PERIOD', 'RANGE', 'N(OBS)', 'JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL',
                        'AUG', 'SEP', 'OCT', 'NOV', 'DEC', 'JAN', 'FEB']
 NEW_BULLETIN_MODS_2019_FILENAME = 'Bulletin_new_mods.csv'  # with some "improvements". For demo.
+MIN_MAX_MARGIN_DAYS = 10  # must be the only min or max within this no. of days to be recognized.
+N_BULLETIN_MONTHS = 14  # bulletin spans Jan 1 yyyy to Feb 28/29 yyyy+1
+
 DAYS_PER_YEAR = 365.25
 HTTP_OK_CODE = 200  # "OK. The request has succeeded."
 JD0 = 2458484.5  # Reference Julian Date for lightcurve phases. Jan 1 2019 00:00 utc
@@ -143,31 +145,37 @@ def capture_vsx_data():
     star_ids = get_bulletin_star_ids()
     df_bulletin = get_df_bulletin()
     jd_end = jd_now()  # collect all obs through 2019 as well (2019 obs to evaluate predictions).
+    jd_df_nobs_start = jd_from_datetime_utc(NOBS_START_DATE)
+    jd_df_nobs_end = jd_from_datetime_utc(NOBS_END_DATE)
 
     for star_id in star_ids:
         period = float(df_bulletin.loc[star_id, 'PERIOD'])
         jd_df_obs_start = jd_from_datetime_utc(FIT_END_DATE) - FIT_PERIODS_TO_CAPTURE * period
-        jd_df_nobs_start = NOBS_START_DATE
+
         # Ensure enough dates to cover both df_obs and df_nobs:
-        jd_start = min(jd_df_obs_start, jd_df_nobs_start)
+        jd_start = min(jd_df_obs_start, jd_df_nobs_start)  # jd_df_obs will almost always be the min.
         df_vsx = get_vsx_obs(star_id, jd_start=jd_start, jd_end=jd_end)
-        print('   ', str(len(df_vsx)), 'obs downloaded from VSX for JD range:',
-              str(int(jd_start)), 'to', str(int(jd_end)) + ':')
+        jd_all_obs = pd.Series([float(jd) for jd in df_vsx['JD']])
+        # print('   ', str(len(df_vsx)), 'obs downloaded from VSX for JD range:',
+        #       str(int(jd_start)), 'to', str(int(jd_end)) + ':')
 
         # Calculate nobs for this star_id, save it as a dict, store dict in list.
-        keep_for_df_nobs = NOBS_START_DATE <= df_vsx['JD'] <= NOBS_END_DATE
+        keep_for_df_nobs = (jd_df_nobs_start <= jd_all_obs) & (jd_all_obs <= jd_df_nobs_end)
         nobs = sum(keep_for_df_nobs)
         nobs_dict = {'star_id': star_id, 'nobs': nobs}
         nobs_dict_list.append(nobs_dict)
 
         # Screen received observation dataframe, add weights column, add df to end of df_obs.
-        keep_for_df_obs = df_vsx['JD'] <= jd_df_obs_start
-        df_vsx = df_vsx[keep_for_df_obs]
-        df_screened = screen_star_obs(df_vsx)
+        keep_for_df_obs = list(jd_all_obs >= jd_df_obs_start)
+        df_vsx_obs = df_vsx[keep_for_df_obs]  # this will usually keep all obs
+        df_screened = screen_star_obs(df_vsx_obs)
         df_this_star = add_obs_weights(df_screened)
         df_obs = pd.concat([df_obs, df_this_star])
-        print('   ', str(len(df_this_star)), 'obs added for df_obs running total of',
-              str(len(df_obs)) + '.')
+        print(star_id.ljust(10),
+              str(len(df_this_star)), 'added of',
+              str(len(df_vsx)), 'downloaded in JD range',
+              str(int(jd_start)), 'to', str(int(jd_end)),
+              'for running df_obs running total of ', str(len(df_obs)) + '.')
 
     df_obs_csv_fullpath = os.path.join(DATA_DIRECTORY, DF_OBS_FILENAME)
     df_obs.to_csv(df_obs_csv_fullpath, sep=';', quotechar='"', encoding='UTF-8',
@@ -175,6 +183,7 @@ def capture_vsx_data():
     print('df_obs dataframe written to', df_obs_csv_fullpath)
 
     df_nobs = pd.DataFrame(nobs_dict_list)  # number of observations in NOBS date range, one row per star.
+    df_nobs = reorder_df_columns(df_nobs, left_column_list=['star_id'])
     df_nobs = df_nobs.set_index('star_id', drop=False)
     df_nobs_csv_fullpath = os.path.join(DATA_DIRECTORY, DF_NOBS_FILENAME)
     df_nobs.to_csv(df_nobs_csv_fullpath, sep=';', quotechar='"', encoding='UTF-8',
@@ -385,7 +394,7 @@ def process_one_star(star_id, df_obs=None, df_bulletin=None, jd0=JD0, quiet=Fals
     # Make dictionary of results to return to calling function:
     amplitude_1 = 2.0 * sqrt(best_result.params['sin1']**2 + best_result.params['cos1']**2)
     result_dict = {'star_id': star_id,
-                   'nobs': best_result.nobs,
+                   'nobs': int(best_result.nobs),
                    'period_sign': period_sign,
                    'bulletin_period': bulletin_period,
                    'period_factor': best_period / bulletin_period,
@@ -406,8 +415,8 @@ def process_all_stars(df_obs=None, df_bulletin=None, jd0=JD0):
     :param df_obs:this star's fully screened observations [pandas DataFrame].
     :param df_bulletin: data from LPV Bulletin (probably via get_df_bulletin()) [pandas Dataframe].
     :param jd0: reference Julian Date, required when performing and using fit [float].
-    :return: dataframe of all fit data; this is enough to perform model predictions for any Bulletin star
-                 at any desired Julian Date, future or past [pandas DataFrame].
+    :return: df_fit_results, the dataframe of all fit data; this is enough to perform model predictions
+                 for any Bulletin star at any desired Julian Date, future or past [pandas DataFrame].
     """
     if df_obs is None:
         df_obs = get_local_df_obs()
@@ -420,14 +429,15 @@ def process_all_stars(df_obs=None, df_bulletin=None, jd0=JD0):
         result_dict = process_one_star(star_id, df_obs, df_bulletin, jd0=jd0, quiet=True)
         result_dict_list.append(result_dict)
         print(star_id.ljust(8),
-              '{0:.3f}'.format(result_dict['r_squared']),
-              '{0:.3f}'.format(result_dict['se']))
+              '{0:4d}'.format(int(result_dict['nobs'])),  # which is the fit nobs, not df_obs nobs.
+              '  r2=' + '{0:.3f}'.format(result_dict['r_squared']),
+              '  se=' + '{0:.2f}'.format(result_dict['se']), 'mag')
 
     df_fit_results = pd.DataFrame(result_dict_list).set_index('star_id', drop=False)
     return df_fit_results
 
 
-def make_new_bulletin(df_fit_results):
+def make_new_bulletin(df_fit_results, bulletin_year=2019):
     """  Project 2019 daily magnitudes for each 2018 Bulletin star,
          construct a 2019 .csv file in same form as 2018 Bulletin .csv.
     :param df_fit_results: comprehensive data from best fit for all LPV stars,
@@ -435,52 +445,34 @@ def make_new_bulletin(df_fit_results):
     :return: [None] rather, writes a .csv file containing 2019 Bulletin data
                  in same form as 2018 bulletin's .csv file.
     """
-    n_dates_to_predict = (PREDICT_END_DATE - PREDICT_START_DATE).days + 1
-    dates_to_predict = [PREDICT_START_DATE + timedelta(days=i) for i in range(n_dates_to_predict)]
+    # Define all dates required to make this bulletin:
+    bulletin_start_date = datetime(bulletin_year, 1, 1, 0, 0, 0).replace(tzinfo=timezone.utc)
+    bulletin_end_date = datetime(bulletin_year + 1, 3, 1, 0, 0, 0).replace(tzinfo=timezone.utc) - \
+                        timedelta(days=1)  # handle leap years gracefully.
+    predict_start_date = bulletin_start_date - timedelta(days=MIN_MAX_MARGIN_DAYS + 1)
+    predict_end_date = bulletin_end_date + timedelta(days=MIN_MAX_MARGIN_DAYS + 1)
+    n_dates_to_predict = (predict_end_date - predict_start_date).days + 1
+    dates_to_predict = [predict_start_date + timedelta(days=i) for i in range(n_dates_to_predict)]
+    jds_to_predict = [jd_from_datetime_utc(date) for date in dates_to_predict]  # don't be clever here.
 
-    # Find list index at all month boundaries:
-    dates_at_month_edge = []
-    idx_at_month_edge = []
-    this_year = PREDICT_START_DATE.year
-    this_month = PREDICT_START_DATE.month
-    while True:
-        date = datetime(this_year, this_month, 1, 0, 0, 0).replace(tzinfo=timezone.utc)
-        if date > PREDICT_END_DATE:
-            break
-        dates_at_month_edge.append(date)
-        idx_at_month_edge.append((date - PREDICT_START_DATE).days)
-        this_month = this_month + 1
-        if this_month >= 13:
-            this_year = this_year + 1
-            this_month = 1
-    jds_to_predict = [jd_from_datetime_utc(date) for date in dates_to_predict]  # not worth being clever.
+    # Identify month boundaries:
+    month_start_dates = []
+    for i_month in range(N_BULLETIN_MONTHS + 1):  # + 1 so that we capture the bulletin end date, too.
+        month_start_year = bulletin_year + (i_month // 12)  # integer division.
+        month_start_month = 1 + (i_month % 12)  # integer remainder.
+        month_start_date = datetime(month_start_year, month_start_month, 1,
+                                    0, 0, 0).replace(tzinfo=timezone.utc)
+        month_start_dates.append(month_start_date)
 
-    # Make header_dict for header row in new bulletin:
-    #    (no, I don't know a more elegant way to do this):
-    header_dict = {'star_id': 'NAME',
-                   'ra_hour': 'RA.HOUR',
-                   'ra_min': 'RA.MIN',
-                   'ra_sec': 'RA.SEC',
-                   'decl_hour': 'DECL.HOUR',
-                   'decl_min': 'DECL.HOUR',
-                   'decl_sec': 'DECL.HOUR',
-                   'period': 'PERIOD',
-                   'range': '<' + 'RANGE',
-                   'n_obs': 'N(OBS)',
-                   'month_1': 'JAN',
-                   'month_2': 'FEB',
-                   'month_3': 'MAR',
-                   'month_4': 'APR',
-                   'month_5': 'MAY',
-                   'month_6': 'JUN',
-                   'month_7': 'JUL',
-                   'month_8': 'AUG',
-                   'month_9': 'SEP',
-                   'month_10': 'OCT',
-                   'month_11': 'NOV',
-                   'month_12': 'DEC',
-                   'month_13': 'JAN',
-                   'month_14': 'FEB'}
+    # Make header_dict for header row in new bulletin (inelegant, but sturdy):
+    df_bulletin_columns = ['star_id',
+                           'ra_hour', 'ra_min', 'ra_sec',
+                           'decl_deg', 'decl_min', 'decl_sec',
+                           'period', 'range', 'n_obs',
+                           'month_1', 'month_2', 'month_3', 'month_4', 'month_5', 'month_6', 'month_7',
+                           'month_8', 'month_9', 'month_10', 'month_11', 'month_12', 'month_13',
+                           'month_14']
+    header_dict = OrderedDict(zip(df_bulletin_columns, NEW_BULLETIN_HEADER))
 
     # For each star, predict mag at all days, find each month's status (max, min, etc).
     df_bulletin = get_df_bulletin()
@@ -488,59 +480,92 @@ def make_new_bulletin(df_fit_results):
     star_dict_list = [header_dict]  # to become first row in df_new_bulletin.
     star_ids = df_bulletin['NAME']
     for star_id in star_ids:
+        print('starting:', star_id)
         period = df_fit_results.loc[star_id, 'best_period']
         jd0 = df_fit_results.loc[star_id, 'jd0']
-        df_x = make_df_x(jds_to_predict, period, jd0)
+        df_x, _ = make_df_x(jds_to_predict, period, jd0)
         fit_result = df_fit_results.loc[star_id, 'fit_result']  # a RegressionResults object (large).
-        predicted_mags = fit_result(df_x)
+        predicted_mags = fit_result.predict(df_x)
 
-        behaviors = []
-        # For each month, find star's mag behavior:
-        for i in range(len(idx_at_month_edge) - 1):
-            idx_start = idx_at_month_edge[i]
-            idx_end = idx_at_month_edge[i + 1]
-            mags = predicted_mags[idx_start:idx_end + 1]
-            mag_start = mags[0]
-            mag_end = mags[-1]
-            mag_max = max(mags)
-            mag_min = min(mags)
-            if mag_min == mag_start and mag_max == mag_end:
-                behavior = 'rising'
-            elif mag_max == mag_start and mag_min == mag_end:
-                behavior = 'fading'
-            elif mag_min < min(mag_start, mag_end):
-                day_min = mags.index(mag_min) + 1
-                behavior = 'MAX(' + str(day_min) + ')'  # NB: max brightness is *minimum* magnitude.
-            else:
-                day_max = mags.index(mag_max) + 1
-                behavior = 'min(' + str(day_max) + ')'
-            behaviors.append(behavior)
+        # Search all dates for minima and maxima, mark them:
+        rolling_max = pd.Series(predicted_mags).rolling(window=10).max()
+        rolling_min = pd.Series(predicted_mags).rolling(window=10).min()
+        min_max_list = []  # will be list of dicts, in date order.
+        days_since_last_min_max = MIN_MAX_MARGIN_DAYS  # as could have min/max on bulletin's first day.
+        for i in range(MIN_MAX_MARGIN_DAYS, n_dates_to_predict - MIN_MAX_MARGIN_DAYS):
+            if days_since_last_min_max >= MIN_MAX_MARGIN_DAYS:
+                if predicted_mags[i] >= max(rolling_max[i - 1], rolling_max[i + MIN_MAX_MARGIN_DAYS]):
+                    min_max_dict = {'event': 'min',  # max magnitude is MIN BRIGHTNESS.
+                                    'date': dates_to_predict[i],
+                                    'mag_pred': predicted_mags[i]}
+                    min_max_list.append(min_max_dict)
+                    days_since_last_min_max = 0
+                elif predicted_mags[i] <= min(rolling_min[i - 1], rolling_min[i + MIN_MAX_MARGIN_DAYS]):
+                    min_max_dict = {'event': 'max',  # min magnitude is MAX BRIGHTNESS.
+                                    'date': dates_to_predict[i],
+                                    'mag_pred': predicted_mags[i]}
+                    min_max_list.append(min_max_dict)
+                    days_since_last_min_max = 0
+                else:
+                    pass
+            days_since_last_min_max += 1
 
-        # Now, make star_dict for this star (to become a row in df_new_bulletin):
+        # Store minima and maxima in month bins:
+        behavior = N_BULLETIN_MONTHS * ['NA']
+        for d in min_max_list:
+            day, month, year = d['date'].day, d['date'].month, d['date'].year
+            i_month = (d['date'].month - 1) + 12 * (d['date'].year - bulletin_year)
+            if 0 <= i_month <= len(behavior) - 1:
+                if d['event'] == 'max':
+                    behavior[i_month] = 'MAX(' + str(day) + ') ' + '{0:.1f}'.format(d['mag_pred'])
+                elif d['event'] == 'min':
+                    behavior[i_month] = 'min(' + str(day) + ') ' + '{0:.1f}'.format(d['mag_pred'])
+                else:
+                    pass
+
+        # Fill in other months' behavior with rising or fading:
+        for i_month in range(N_BULLETIN_MONTHS):
+            if behavior[i_month] == 'NA':
+                month_start_date = month_start_dates[i_month]
+                month_end_date = month_start_dates[i_month + 1]
+                i_start = (month_start_date - predict_start_date).days
+                i_end = (month_end_date - predict_start_date).days
+                if predicted_mags[i_end] > predicted_mags[i_start]:
+                    behavior[i_month] = 'fading'  # when brightness is fading, mag is increasing.
+                elif predicted_mags[i_end] < predicted_mags[i_start]:
+                    behavior[i_month] = 'rising'  # when brightness is rising, mag is decreasing.
+                else:
+                    behavior[i_month] = 'const.'  # (probably never occurs).
+
+        # Now, make star_dict for this star (to become a row in df_new_bulletin), append dict to list:
         star_dict = {'star_id': star_id,
                      'ra_hour': df_bulletin.loc[star_id, 'RA.HOUR'],
                      'ra_min': df_bulletin.loc[star_id, 'RA.MIN'],
                      'ra_sec': df_bulletin.loc[star_id, 'RA.SEC'],
-                     'decl_hour': df_bulletin.loc[star_id, 'DECL.HOUR'],
-                     'decl_min': df_bulletin.loc[star_id, 'DECL.HOUR'],
-                     'decl_sec': df_bulletin.loc[star_id, 'DECL.HOUR'],
-                     'period': period,
+                     'decl_deg': df_bulletin.loc[star_id, 'DECL.DEG'],
+                     'decl_min': df_bulletin.loc[star_id, 'DECL.MIN'],
+                     'decl_sec': df_bulletin.loc[star_id, 'DECL.SEC'],
+                     'period': '{0:.1f}'.format(period),
                      'range': '<' + '{0:.1f}'.format(min(predicted_mags)) + '-' +
                               '{0:.1f}'.format(max(predicted_mags)) + '>',
-                     'n_obs': df_nobs['star_id']
+                     'n_obs': df_nobs.loc[star_id, 'nobs']
                      }
-        for i in range(len(idx_at_month_edge) - 1):
-            this_key = 'month_' + str(i + 1)
-            this_behavior = behaviors[i]
+        for i_month in range(N_BULLETIN_MONTHS):
+            this_key = 'month_' + str(i_month + 1)
+            this_behavior = behavior[i_month]
             star_dict[this_key] = this_behavior
         star_dict_list.append(star_dict)
 
+    # Make the dataframe:
     df_new_bulletin = pd.DataFrame(star_dict_list)
+    # reorder_df_columns(df_new_bulletin, df_bulletin_columns)
     df_new_bulletin = df_new_bulletin.set_index('star_id', drop=False)
 
+    # Write the dataframe to demo .csv file:
     fullpath = os.path.join(DATA_DIRECTORY, NEW_BULLETIN_FILENAME)
     df_new_bulletin.to_csv(fullpath, sep=';', quotechar='"', encoding='UTF-8',
-                           quoting=2, index=False)  # quoting=2-->quotes around non-numerics.
+                           header=False, quoting=2,
+                           index=False)  # quoting=2-->quotes around non-numerics.
 
 
 SUPPORT_________________________________________________ = 0
@@ -570,7 +595,8 @@ def get_df_bulletin(path=None):
         path = os.path.join(DATA_DIRECTORY, BULLETIN2018_FILENAME)
     df_bulletin = pd.read_csv(path, sep=',', encoding="UTF-8", na_filter=False)
     df_bulletin['NAME'] = [name.strip().upper() for name in df_bulletin['NAME']]
-    df_bulletin = df_bulletin[df_bulletin['NAME'] not in ['NAME', '']]
+    keep_rows = [name not in ['NAME', ''] for name in df_bulletin['NAME']]
+    df_bulletin = df_bulletin[keep_rows]
     df_bulletin = df_bulletin.set_index('NAME', drop=False)
     return df_bulletin
 
@@ -634,3 +660,20 @@ def jd_now():
     :return: Julian date for immediate present per system clock [float].
     """
     return jd_from_datetime_utc(datetime.now(timezone.utc))
+
+
+def reorder_df_columns(df, left_column_list=[], right_column_list=[]):
+    """ Push desired columns to left edge of dataframe, others to right of dataframe.
+           Other columns are left in between, in their original order.
+           Largely cosmetic, but can be useful for debugging.
+    :param df: any dataframe [pandas Dataframe]
+    :param left_column_list: list of column names to go left [list of strings].
+    :param right_column_list: list of column names to go right [list of strings].
+    :return: dataframe with reordered columns [pandas DataFrame].
+    """
+    new_column_order = left_column_list +\
+                       [col_name for col_name in df.columns
+                        if col_name not in (left_column_list + right_column_list)] +\
+                       right_column_list
+    df = df[new_column_order]
+    return df
