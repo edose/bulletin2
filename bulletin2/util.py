@@ -1,12 +1,14 @@
 import functools
 from datetime import datetime, timezone, timedelta
 import os
-from math import sin, cos, pi, sqrt
+from math import sin, cos, pi, sqrt, floor
 from collections import OrderedDict
+from statistics import median
 
 import pandas as pd
 import urllib.request
 import statsmodels.api as sm
+import matplotlib.pyplot as plt
 
 __author__ = "Eric Dose :: New Mexico Mira Project, Albuquerque"
 
@@ -36,6 +38,8 @@ VSX_OBSERVATIONS_HEADER = 'https://www.aavso.org/vsx/index.php?view=api.delim'
 VSX_DELIMITER = '@@@'  # NB: ',' fails as obsName values already have a comma.
 MIN_MAG = 0.1  # magnitudes must be greater than this numeric value (mostly to remove zeroes).
 MAX_MAG = 20.0  # maximum reasonable magnitude numeric value (subject to later revision for meter scopes).
+
+PERIOD_BEST_SHIFT_TO_FIT_ONLY_SHIFT = 0.6  # fraction of fit period shift to actually use (regularization).
 
 # =====================================================================================================
 #
@@ -144,22 +148,21 @@ def capture_vsx_data():
 
     star_ids = get_bulletin_star_ids()
     df_bulletin = get_df_bulletin()
-    jd_end = jd_now()  # collect all obs through 2019 as well (2019 obs to evaluate predictions).
     jd_df_nobs_start = jd_from_datetime_utc(NOBS_START_DATE)
     jd_df_nobs_end = jd_from_datetime_utc(NOBS_END_DATE)
 
     for star_id in star_ids:
+        # Ensure enough dates to cover both df_obs and df_nobs:
+        # ... where df_obs has all the observations, and df_nobs exists only to count nobs in past year.
         period = float(df_bulletin.loc[star_id, 'PERIOD'])
         jd_df_obs_start = jd_from_datetime_utc(FIT_END_DATE) - FIT_PERIODS_TO_CAPTURE * period
-
-        # Ensure enough dates to cover both df_obs and df_nobs:
         jd_start = min(jd_df_obs_start, jd_df_nobs_start)  # jd_df_obs will almost always be the min.
+        jd_end = jd_now()  # collect all obs through 2019 as well (2019 obs to evaluate predictions).
+
         df_vsx = get_vsx_obs(star_id, jd_start=jd_start, jd_end=jd_end)
-        jd_all_obs = pd.Series([float(jd) for jd in df_vsx['JD']])
-        # print('   ', str(len(df_vsx)), 'obs downloaded from VSX for JD range:',
-        #       str(int(jd_start)), 'to', str(int(jd_end)) + ':')
 
         # Calculate nobs for this star_id, save it as a dict, store dict in list.
+        jd_all_obs = pd.Series([float(jd) for jd in df_vsx['JD']])
         keep_for_df_nobs = (jd_df_nobs_start <= jd_all_obs) & (jd_all_obs <= jd_df_nobs_end)
         nobs = sum(keep_for_df_nobs)
         nobs_dict = {'star_id': star_id, 'nobs': nobs}
@@ -228,11 +231,12 @@ def make_df_x(jd_list, fit_period, jd0=JD0):
     """  Given a list of JDs and other input data, deliver a dataframe ready to use as X-value
          (independent variable) input to a regression function; one column per variable, one row per obs.
     :param jd_list: list of Julian date values to use in fitting observed magnitudes or in predicting
-               magnitudes for new JDs.
+               magnitudes for new JDs [list of floats].
     :param fit_period: the LPV period in days to *assume* in the fit (may differ from Bulletin P) [float].
-    :param jd0: Reference Julian Date to use in constructing dataframe. Has two effects:
-               (1) the fitted v_const parameter value will represent the projected mag at this date, and
-               (2) all phases will use this date as to establish zero phase.
+    :param jd0: Reference Julian Date to use in constructing dataframe [float].
+                Has two effects:
+                (1) the fitted v_const parameter value will represent the projected mag at this date, and
+                (2) all phases will use this date as to establish zero phase.
     :return: small dataframe with required X-value data [pandas Dataframe].
     """
     df_x = pd.DataFrame()
@@ -356,57 +360,59 @@ def process_one_star(star_id, df_obs=None, df_bulletin=None, jd0=JD0, quiet=Fals
         a = (x3 * (y2 - y1) + x2 * (y1 - y3) + x1 * (y3 - y2)) / denom
         b = (x3 * x3 * (y1 - y2) + x2 * x2 * (y3 - y1) + x1 * x1 * (y2 - y3)) / denom
         # c = (x2 * x3 * (x2 - x3) * y1 + x3 * x1 * (x3 - x1) * y2 + x1 * x2 * (x1 - x2) * y3) / denom
-        best_fit_factor = -b / (2 * a)  # x-value at interpolated maximum.
-        if x1 <= best_fit_factor <= x3:
+        fit_factor = -b / (2 * a)  # x-value at interpolated maximum.
+        if x1 <= fit_factor <= x3:
             # Period seems to be within range, so we will use the interpolated period:
-            best_period = best_fit_factor * bulletin_period
+            fit_period = fit_factor * bulletin_period
             period_sign = '~'
-            best_result, jd0 = fit_one_star(star_id, df_obs, df_bulletin,
-                                            period_factor=best_fit_factor, jd0=jd0)
-            best_r_squared = best_result.rsquared
-        elif best_fit_factor < x1:
+            fit_result, jd0 = fit_one_star(star_id, df_obs, df_bulletin,
+                                           period_factor=fit_factor, jd0=jd0)
+            fit_r_squared = fit_result.rsquared
+        elif fit_factor < x1:
             # Period seems to be below range:
-            best_period = fit_factors[0] * bulletin_period
+            fit_period = fit_factors[0] * bulletin_period
             period_sign = '<'
-            best_r_squared = all_results[0].rsquared
-            best_result = all_results[0]
+            fit_r_squared = all_results[0].rsquared
+            fit_result = all_results[0]
         else:
             # Period seems to be above range:
-            best_period = fit_factors[2] * bulletin_period
+            fit_period = fit_factors[2] * bulletin_period
             period_sign = '>'
-            best_r_squared = all_results[2].rsquared
-            best_result = all_results[2]
+            fit_r_squared = all_results[2].rsquared
+            fit_result = all_results[2]
     else:
         # Here, R^2 vs period appears concave up, so just take the highest R^2, mark with uncertainty sign:
         r2_list = [all_results[i].rsquared for i in range(3)]
         i_max = r2_list.index(max(r2_list))
-        best_period = fit_factors[i_max] * bulletin_period
+        fit_period = fit_factors[i_max] * bulletin_period
         period_sign = '?'
-        best_r_squared = all_results[i_max].rsquared
-        best_result = all_results[i_max]
+        fit_r_squared = all_results[i_max].rsquared
+        fit_result = all_results[i_max]
+
+    best_period = bulletin_period + PERIOD_BEST_SHIFT_TO_FIT_ONLY_SHIFT * (fit_period - bulletin_period)
 
     if not quiet:
         print(star_id.ljust(16), '   Best: ',
               '   factor' + period_sign + '{0:.3f}'.format(best_period / bulletin_period),
-              '   P=' + '{0:.1f}'.format(best_period),
-              '   R^2=' + '{0:.3f}'.format(best_r_squared))
+              '   P(best)=' + '{0:.1f}'.format(best_period),
+              '   R^2=' + '{0:.3f}'.format(fit_r_squared))
 
     # Make dictionary of results to return to calling function:
-    amplitude_1 = 2.0 * sqrt(best_result.params['sin1']**2 + best_result.params['cos1']**2)
+    amplitude_1 = 2.0 * sqrt(fit_result.params['sin1']**2 + fit_result.params['cos1']**2)
     result_dict = {'star_id': star_id,
-                   'nobs': int(best_result.nobs),
+                   'nobs': int(fit_result.nobs),
                    'period_sign': period_sign,
                    'bulletin_period': bulletin_period,
                    'period_factor': best_period / bulletin_period,
                    'best_period': best_period,
                    'jd0': jd0,
-                   'r_squared': best_r_squared,
+                   'r_squared': fit_r_squared,
                    'amplitude_1': amplitude_1,
-                   'params': best_result.params,
-                   'params_se': best_result.bse,
-                   'condition_number': best_result.condition_number,
-                   'se': best_result.mse_resid,
-                   'fit_result': best_result}
+                   'params': fit_result.params,
+                   'params_se': fit_result.bse,
+                   'condition_number': fit_result.condition_number,
+                   'se': fit_result.mse_resid,
+                   'fit_result': fit_result}
     return result_dict
 
 
@@ -442,6 +448,7 @@ def make_new_bulletin(df_fit_results, bulletin_year=2019):
          construct a 2019 .csv file in same form as 2018 Bulletin .csv.
     :param df_fit_results: comprehensive data from best fit for all LPV stars,
                from process_all_stars() [very large pandas DataFrame].
+    :param bulletin_year: year for which to make bulletin [int].
     :return: [None] rather, writes a .csv file containing 2019 Bulletin data
                  in same form as 2018 bulletin's .csv file.
     """
@@ -568,6 +575,160 @@ def make_new_bulletin(df_fit_results, bulletin_year=2019):
                            index=False)  # quoting=2-->quotes around non-numerics.
 
 
+def make_short_prediction(star_id, jd_preds=None, df_bulletin=None, df_obs=None, jd0=JD0):
+    """  Make a short prediction for one star at one JD, using both long fit lightcurve and recent
+         observations to estimate recent mag shift from that fit lightcurve.
+    :param star_id: the STAR id, as NAME in Bulletin 2018 [string].
+    :param jd_preds: Julian Dates for which short prediction is desired [float, or list of floats].
+    :param df_bulletin: data from LPV Bulletin (probably via get_df_bulletin()).
+               If absent or None, this function will download data from text file. [pandas Dataframe].
+    :param df_obs: dataframes with observations from VSX--must cover all needed ranges.
+               If absent or None, this function will download data (slow) [pandas Dataframe].
+    :param jd0: reference Julian Date, required when performing and using fit [float].
+    :return: best short predictions for star at jd_preds [pandas Series with jd_preds as index].
+    """
+    # Ensure prediction JD list and bulletin data are ready:
+    if jd_preds is None:
+        jd_preds = make_jd_preds(datetime(2019,1,1).replace(tzinfo=timezone.utc),
+                                 datetime(2020,3,1).replace(tzinfo=timezone.utc),
+                                 30.0)
+    elif not isinstance(jd_preds, list):
+        jd_preds = [jd_preds]
+
+    star_id = star_id.upper()
+    if df_bulletin is None:
+        df_bulletin = get_df_bulletin()
+    period = float(df_bulletin.loc[star_id, 'PERIOD'])
+
+    # Ensure df_all_obs is ready (fitting shall not use obs more recent than most recent date to predict):
+    if df_obs is None:
+        earliest_jd_pred, latest_jd_pred = min(jd_preds), max(jd_preds)
+        jd_download_start = earliest_jd_pred - FIT_PERIODS_TO_CAPTURE * period
+        df_all_obs = get_vsx_obs(star_id, jd_download_start, latest_jd_pred)
+    else:
+        df_all_obs = df_obs.copy()
+    df_all_obs['JD'] = [float(jd) for jd in df_all_obs['JD']]
+    df_all_obs = df_all_obs.sort_values(by='JD')
+    df_all_obs = add_obs_weights(screen_star_obs(df_all_obs))
+
+    # Make prediction for each date in jd_preds:
+    # We must use a loop, because each jd_pred will be fit on a different df_obs (subset of df_all_obs).
+    best_mags = []
+    for jd_pred in jd_preds:
+        # Select obs on which to fit:
+        latest_jd_fit = jd_pred - 30.0
+        earliest_jd_fit = latest_jd_fit - FIT_PERIODS_TO_CAPTURE * period
+        to_use_in_fit = [(jd >= earliest_jd_fit) and (jd <= latest_jd_fit) for jd in df_all_obs['JD']]
+        df_obs_fit = df_all_obs[to_use_in_fit]
+
+        # Make long prediction for this jd_pred:
+        pred_result_dict = process_one_star(star_id, df_obs_fit, df_bulletin, jd0, quiet=True)
+        df_x, jd0 = make_df_x([jd_pred], pred_result_dict['best_period'], jd0)
+        fit_result = pred_result_dict['fit_result']  # a RegressionResults object (large).
+        long_prediction = fit_result.predict(df_x)[0]
+
+        # Calculate mean offset of recent obs from long prediction mags:
+        df_most_recent_obs = df_obs_fit[-20:]  # 20 most recent obs used in long prediction fit (above).
+        if len(df_most_recent_obs) <= 0:
+            # print(' >>>>> make_short_prediction(): No recent obs for', star_id, '... mean offset -> 0.')
+            median_offset = 0
+        else:
+            df_x, jd0 = make_df_x(df_most_recent_obs['JD'], pred_result_dict['best_period'], jd0)
+            predicted_mags = fit_result.predict(df_x)  # same fit model as for long prediction above.
+            offsets = [(float(o) - p) for (o, p) in zip(df_most_recent_obs['mag'], predicted_mags)]
+            median_offset = median(offsets)
+            # print('median offset =', median_offset)
+        best_short_prediction = long_prediction + median_offset
+        best_mags.append(best_short_prediction)
+
+    best_mags = pd.Series(data=best_mags, index=jd_preds)
+    return best_mags
+
+
+def make_short_pred_demo(jd_preds=None):
+    """
+    :param jd_preds: For all Bulletin 2018 stars, make mag short predictions at series of JDs, render plots.
+    """
+    # Set up base data:
+    df_bulletin = get_df_bulletin()
+    star_ids = get_bulletin_star_ids()
+    if jd_preds is None:
+        jd_preds = make_jd_preds(datetime(2019,1,1).replace(tzinfo=timezone.utc),
+                                 datetime(2020,3,1).replace(tzinfo=timezone.utc),
+                                 30.0)
+    earliest_jd_pred, latest_jd_pred = min(jd_preds), max(jd_preds)
+    jd_floor = 1000.0 * floor(earliest_jd_pred / 1000.0)
+    jd_preds_to_plot = [jd - jd_floor for jd in jd_preds]
+    label_x = 'JD - ' + str(int(jd_floor))
+
+    # For initial test & debugging:
+    df_bulletin = df_bulletin[:22]
+    star_ids = star_ids[:22]
+
+    n_plot_columns, n_plot_rows = 4, 3
+    i_plot_row, i_plot_column = 0, 0
+    n_plots_completed = 0
+
+    for star_id in star_ids:
+        # Get df_all_obs here, because we'll need it for plotting below:
+        period = float(df_bulletin.loc[star_id, 'PERIOD'])
+        jd_download_start = earliest_jd_pred - FIT_PERIODS_TO_CAPTURE * period
+        df_vsx_obs = get_vsx_obs(star_id, jd_download_start, latest_jd_pred)
+        df_screened = screen_star_obs(df_vsx_obs)
+        df_all_obs = add_obs_weights(df_screened)
+        df_all_obs['JD'] = [float(jd) for jd in df_all_obs['JD']]
+        in_plot_range = (df_all_obs['JD'] >= earliest_jd_pred) & (df_all_obs['JD'] <= latest_jd_pred)
+        df_plot_obs = df_all_obs[in_plot_range].copy()
+        jd_obs_to_plot = [jd - jd_floor for jd in df_plot_obs['JD']]
+
+        # Compute short-term predictions at each jd_preds value, each with its own base data for fit:
+        short_preds = make_short_prediction(star_id.upper(), jd_preds, df_bulletin, df_all_obs)
+
+        # Start new figure page if needed:
+        if i_plot_column == 0 and i_plot_row == 0:
+            fig, axes = plt.subplots(ncols=n_plot_columns, nrows=n_plot_rows,
+                                     figsize=(16, 10))  # (width, height) in "inches"
+
+        # Add plot to overall figure page:
+        ax = axes[i_plot_row, i_plot_column]
+        ax.set_title(star_id.upper(), y=0.89)
+        ax.set_xlabel(label_x, labelpad=-27)
+        ax.set_ylabel('Mag V/Vis.', labelpad=-8)
+
+        # Plot experimental observations and (short) predicted mags:
+        obs_mags = [float(mag) for mag in df_plot_obs['mag']]
+        ax.scatter(x=jd_obs_to_plot, y=obs_mags, alpha=0.4, color='black', zorder=+500)
+        ax.scatter(x=jd_preds_to_plot, y=short_preds, alpha=0.9, color='red', zorder=+1000)
+
+        # Finish plot (y-scale inverted, per custom of plotting mags brighter=upward):
+        all_mags = list(obs_mags) + list(short_preds)
+        max_mag = max(all_mags)
+        min_mag = min(all_mags)
+        mag_margin = 0.06 * (max_mag - min_mag)
+        ax.set_ylim(max_mag + mag_margin, min_mag - 1.4 * mag_margin)
+        ax.grid(True, color='lightgray', zorder=-1000)
+        n_plots_completed += 1
+        print(star_id.upper(), 'plotted.')
+
+        # Prepare column and row indices for the next plot:
+        i_plot_column += 1
+        if i_plot_column >= n_plot_columns:
+            i_plot_column, i_plot_row = 0, i_plot_row + 1
+        if i_plot_row >= n_plot_rows:
+            i_plot_row = 0
+
+        # Flush page of plots if page full or if all plots have now been made:
+        page_finished = i_plot_column == 0 and i_plot_row == 0 and n_plots_completed != 0
+        all_plots_finished = (n_plots_completed == len(star_ids))
+        if page_finished or all_plots_finished:
+            fig.tight_layout(rect=(0, 0, 1, 0.925))
+            fig.subplots_adjust(left=0.06, bottom=0.06, right=0.94, top=0.85, wspace=0.25, hspace=0.25)
+            plt.show()
+            i_plot_row, i_plot_column = 0, 0
+            print('Page plotted:', str(n_plots_completed), 'plots done.')
+
+
+
 SUPPORT_________________________________________________ = 0
 
 
@@ -599,6 +760,28 @@ def get_df_bulletin(path=None):
     df_bulletin = df_bulletin[keep_rows]
     df_bulletin = df_bulletin.set_index('NAME', drop=False)
     return df_bulletin
+
+
+def make_jd_preds(first_datetime, last_datetime, increment_days):
+    """ Makes Julian Date list for user in make_short_prediction().
+        If number of increments between first and last dates is non-integral, count from last_datetime.
+    :param first_datetime: datetime to begin series [python Datetime object].
+    :param last_datetime: datetime to end series [python Datetime object].
+    :param increment_days: number of days between jd_preds [float].
+    :return: list of Julian Dates [list of floats].
+    """
+    jd_first = jd_from_datetime_utc(first_datetime)
+    jd_last = jd_from_datetime_utc(last_datetime)
+
+    if jd_last < jd_first:
+        return None
+    elif jd_last == jd_first:
+        return [jd_first]
+
+    n_increments = int(floor((jd_last - jd_first) / increment_days))
+    jd_preds = [jd_last - i * increment_days
+                for i in range(n_increments + 1)][::-1]  # sorted by incr jds.
+    return jd_preds
 
 
 def get_local_df_nobs():
@@ -662,7 +845,7 @@ def jd_now():
     return jd_from_datetime_utc(datetime.now(timezone.utc))
 
 
-def reorder_df_columns(df, left_column_list=[], right_column_list=[]):
+def reorder_df_columns(df, left_column_list=None, right_column_list=None):
     """ Push desired columns to left edge of dataframe, others to right of dataframe.
            Other columns are left in between, in their original order.
            Largely cosmetic, but can be useful for debugging.
@@ -671,6 +854,10 @@ def reorder_df_columns(df, left_column_list=[], right_column_list=[]):
     :param right_column_list: list of column names to go right [list of strings].
     :return: dataframe with reordered columns [pandas DataFrame].
     """
+    if left_column_list is None:
+        left_column_list = []
+    if right_column_list is None:
+        right_column_list = []
     new_column_order = left_column_list +\
                        [col_name for col_name in df.columns
                         if col_name not in (left_column_list + right_column_list)] +\
