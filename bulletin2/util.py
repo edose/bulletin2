@@ -653,8 +653,8 @@ def make_short_pred_demo(jd_preds=None):
     df_bulletin = get_df_bulletin()
     star_ids = get_bulletin_star_ids()
     if jd_preds is None:
-        jd_preds = make_jd_preds(datetime(2019,1,1).replace(tzinfo=timezone.utc),
-                                 datetime(2020,3,1).replace(tzinfo=timezone.utc),
+        jd_preds = make_jd_preds(datetime(2019, 1, 1).replace(tzinfo=timezone.utc),
+                                 datetime(2020, 3, 1).replace(tzinfo=timezone.utc),
                                  30.0)
     earliest_jd_pred, latest_jd_pred = min(jd_preds), max(jd_preds)
     jd_floor = 1000.0 * floor(earliest_jd_pred / 1000.0)
@@ -662,12 +662,13 @@ def make_short_pred_demo(jd_preds=None):
     label_x = 'JD - ' + str(int(jd_floor))
 
     # For initial test & debugging:
-    df_bulletin = df_bulletin[:22]
-    star_ids = star_ids[:22]
+    df_bulletin = df_bulletin
+    star_ids = star_ids
 
     n_plot_columns, n_plot_rows = 4, 3
     i_plot_row, i_plot_column = 0, 0
     n_plots_completed = 0
+    i_first_plot = 1
 
     for star_id in star_ids:
         # Get df_all_obs here, because we'll need it for plotting below:
@@ -692,8 +693,8 @@ def make_short_pred_demo(jd_preds=None):
         # Add plot to overall figure page:
         ax = axes[i_plot_row, i_plot_column]
         ax.set_title(star_id.upper(), y=0.89)
-        ax.set_xlabel(label_x, labelpad=-27)
-        ax.set_ylabel('Mag V/Vis.', labelpad=-8)
+        ax.set_xlabel(label_x, labelpad=0)
+        ax.set_ylabel('Mag V/Vis.', labelpad=0)
 
         # Plot experimental observations and (short) predicted mags:
         obs_mags = [float(mag) for mag in df_plot_obs['mag']]
@@ -722,11 +723,18 @@ def make_short_pred_demo(jd_preds=None):
         all_plots_finished = (n_plots_completed == len(star_ids))
         if page_finished or all_plots_finished:
             fig.tight_layout(rect=(0, 0, 1, 0.925))
-            fig.subplots_adjust(left=0.06, bottom=0.06, right=0.94, top=0.85, wspace=0.25, hspace=0.25)
+            fig.subplots_adjust(left=0.06, bottom=0.075, right=0.94, top=0.875, wspace=0.3, hspace=0.3)
+            title_text = 'Demo for online LPV tool: 2018 Bulletin stars ' + \
+                         str(i_first_plot) + ' through ' + str(n_plots_completed)
+            fig.suptitle(title_text, color='dimgray', fontsize=18)
+            fig.canvas.set_window_title(title_text)
             plt.show()
-            i_plot_row, i_plot_column = 0, 0
+            fullpath = 'C:/Astro/AAVSO/Bulletin web project 2019/Demo ' +\
+                       '{0:03d}'.format(i_first_plot) + '.png'
+            plt.savefig(fullpath, orientation='landscape')
+            i_plot_row, i_plot_column = 0, 0  # for next plot page (if any).
+            i_first_plot = n_plots_completed + 1  # "
             print('Page plotted:', str(n_plots_completed), 'plots done.')
-
 
 
 SUPPORT_________________________________________________ = 0
