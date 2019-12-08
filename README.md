@@ -1,23 +1,34 @@
 #  bulletin2
-Demonstration code for an online replacement and extension of AAVSO's venerable LPV Bulletins.
+Demonstration code for an online resumption and extension of the venerable LPV Bulletins
+previously published by the [American Association of Variable Star Observers (AAVSO)](https://aavso.org).
 
-There are two approaches to this: (1) a direct replacement of the 
-previous annual LPV Bulletins, to be downloaded by users once per 
-year and used for the entire calendar year; and 
-(2) an as-yet undesigned online tool that LPV observers could access
-through a regular browser, whenever they want, and with screening of
-target stars suited to their geographic location and
-observing abilities or preferences. 
+AAVSO has a strong interest in informing LPV observers, so that they can make the most
+scientifically useful observations in line with their observing preferences.
+There are two obvious approaches: 
+1. Directly replace the 
+previous annual LPV Bulletins. Observers download this once per 
+year and used it for that entire calendar year. 
+2. Provide a new online tool for LPV observers to access
+through a regular browser, whenever they want. 
+Ideally, they would receive information only on target stars suited to their 
+geographic location and observing abilities or preferences. 
 
 Both approaches require that the master list of LPVs have each target star's 
-V / Visible magnitude predicted in advance, to guide observations. 
-It turns out that the two approaches' mag-prediction demands are so
-different that each needed its own demonstration. 
+V / Visible magnitude predicted in advance, even if only approximately. 
+But the two approaches' mag-prediction demands differ 
+enough that each needed its own demonstration. 
+Each "static" Bulletin document needs long-term (~15 months') predictions, whereas
+an online tool could have its predictions refreshed monthly, weekly, or even conceivably
+in real time, using all the data received to that moment for the freshest magnitude 
+predictions. 
 
-**BOTH demonstrations of automated predictions are included here.** 
+The two automated prediction strategies are quite different.
+Through simulation with existing database data, I have demonstrated that both approaches 
+are feasible. 
 
+**Both demonstrations are included in this repo.** 
 
- **Motivation:** 
+###Motivation
  
  For all the 379 LPV (long-period variable) stars in Bulletin 2018, we want to predict the following:
  * minimum and maximum dates and their approximate V-mags during next calendar year,
@@ -28,7 +39,7 @@ different that each needed its own demonstration.
     
 All the above is intended to help observers better define the light curve over the next year.
  
- **The lightcurve model:**
+###The lightcurve model
 
 Both demonstrations use exactly the same foundation numerical model for
 the persistent shape of LPV lightcurves, 
@@ -37,23 +48,26 @@ thus comprising 6 fitted parameters.
 We weight more recent observations more heavily 
 as they are certainly more relevant (per obs) to next-year predictions.
 
-A star's **LPV period** (on which each star's Fourier series is based) 
-is also a parameter unless one fixes it to constant value,
-which proved impossible for two reasons: (1) even the best sources of 
+A star's **LPV period** (on which that star's Fourier series is based) 
+amounts to an additional parameter--unless one fixes it to constant value,
+which proved impossible for two reasons: 
+1. even the best sources of 
 LPV period information are unreliable for perhaps 20% of the listed stars,
-and (2) LPV periods do change over time scale of years, so that listed
+and 
+2. LPV periods do change over time scale of years, so that listed
 periods need to be adjusted for stable Fourier fits. 
 Worse, period is an extremely non-linear parameter, 
 so we must fit it indirectly and approximately.
+
 Experiments indicate that when a LPV's period 
 deviates from the historical by more than perhaps 5%, 
 this can be detected.
-As a side-benefit If this result holds, each such star can and should be
-marked as a special target for its next maximum and minimum.
+As a side-benefit :each such deviant LPV star can and should be
+marked as a special target for observation at (at least) its next maximum and minimum.
 ---
 ---
 
-**Demonstration 1 of 2: Make an ANNUAL, STATIC LPV Bulletin table:**
+####Demonstration 1 of 2: Make an ANNUAL, STATIC LPV Bulletin table:
 
 _Code file util.py. Primary function: make_new_bulletin()._ 
 
@@ -144,8 +158,8 @@ AAVSO mid-November 2019._
 
 ---
 
-**Demonstration 2 of 2: Make SHORT-TERM predictions of LPV
- V/Vis magnitudes ON DEMAND:**
+####Demonstration 2 of 2: Make SHORT-TERM predictions of LPV
+ V/Vis magnitudes ON DEMAND:
 
 _Code file util.py. Primary code: make_short_pred_demo()._ 
 
@@ -234,7 +248,7 @@ statistical gains requires additional computation and code.
 ---
 ---
 
-**In conclusion:**
+##In conclusion:
 
 Imagine: a talented observer--whether visual, CCD, or other--wants
 to know "what's up" tonight: what LPVs are available for him to
