@@ -28,7 +28,7 @@ are feasible.
 
 **Both demonstrations are included in this repo.** 
 
-###Motivation
+###  Motivation
  
  For all the 379 LPV (long-period variable) stars in Bulletin 2018, we want to predict the following:
  * minimum and maximum dates and their approximate V-mags during next calendar year,
@@ -39,7 +39,7 @@ are feasible.
     
 All the above is intended to help observers better define the light curve over the next year.
  
-###The lightcurve model
+### The lightcurve model
 
 Both demonstrations use exactly the same foundation numerical model for
 the persistent shape of LPV lightcurves, 
@@ -59,15 +59,17 @@ periods need to be adjusted for stable Fourier fits.
 Worse, period is an extremely non-linear parameter, 
 so we must fit it indirectly and approximately.
 
-Experiments indicate that when a LPV's period 
-deviates from the historical by more than perhaps 5%, 
-this can be detected.
-As a side-benefit :each such deviant LPV star can and should be
-marked as a special target for observation at (at least) its next maximum and minimum.
----
----
+Extensive simulation experiments indicate that 
+both modeling approaches below can signal a LPV's period 
+deviating from the historical by more than perhaps 5%.
+This has two great benefits: signaling a possible model inaccuracy,
+possibly due to insufficient or corrupted input data (previous
+observations), and failing that, the LPV star is marked as having
+unusual, non-periodic behavior and is thus marked as a special
+target for observation through (at least) its next maximum and minimum
+brightness.
 
-####Demonstration 1 of 2: Make an ANNUAL, STATIC LPV Bulletin table:
+#### Demonstration 1 of 2: Make an ANNUAL, STATIC LPV Bulletin table:
 
 _Code file util.py. Primary function: make_new_bulletin()._ 
 
@@ -156,10 +158,7 @@ The prediction process for annual, static Bulletins:
 _This first demonstration was posted here and signaled to 
 AAVSO mid-November 2019._
 
----
-
-####Demonstration 2 of 2: Make SHORT-TERM predictions of LPV
- V/Vis magnitudes ON DEMAND:
+#### Demonstration 2 of 2: Make SHORT-TERM predictions of LPV (for V/Vis magnitudes ON DEMAND):
 
 _Code file util.py. Primary code: make_short_pred_demo()._ 
 
@@ -245,10 +244,7 @@ statistical gains requires additional computation and code.
    unfortunate, but then an online tool is under consideration
    to remedy exactly that).  
 
----
----
-
-##In conclusion:
+## In conclusion:
 
 Imagine: a talented observer--whether visual, CCD, or other--wants
 to know "what's up" tonight: what LPVs are available for him to
