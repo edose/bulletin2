@@ -1,3 +1,4 @@
+# Python core packages (need no separate installation):
 import functools
 from datetime import datetime, timezone, timedelta
 import os
@@ -5,10 +6,13 @@ from math import sin, cos, pi, sqrt, floor
 from collections import OrderedDict
 from statistics import median
 
-import pandas as pd
-import urllib.request
-import statsmodels.api as sm
-import matplotlib.pyplot as plt
+# External packages requiring separate installation:
+import pandas as pd  # as standard as it gets.
+import statsmodels.api as sm  # should be v.0.10 or higher.
+
+# External packages probably not needed for online tools:
+import urllib.request  # only for downloading of AID data only via web; prob. not needed by server tools.
+import matplotlib.pyplot as plt  # only needed for my demo plots, v. prob. not for server tools.
 
 __author__ = "Eric Dose :: New Mexico Mira Project, Albuquerque"
 
