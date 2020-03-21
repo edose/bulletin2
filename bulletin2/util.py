@@ -525,12 +525,13 @@ def process_all_stars(dates=None):
     return df_fit_results
 
 
-def make_new_bulletin(dates, df_fit_results):
+def make_new_bulletin(dates, df_fit_results, include_magnitudes=True):
     """  Project 2019 daily magnitudes for each 2018 Bulletin star,
          construct a 2019 .csv file in same form as 2018 Bulletin .csv.
     :param dates: dict of dates etc
     :param df_fit_results: comprehensive data from best fit for all LPV stars,
                from process_all_stars() [very large pandas DataFrame].
+    :param include_magnitudes: True iff predicted magnitude to be written with each min or max. [boolean]
     :return: [None] rather, writes a .csv file containing new Bulletin data
                  in form very like that of 2018 bulletin's .csv file.
     """
@@ -555,7 +556,7 @@ def make_new_bulletin(dates, df_fit_results):
         month_start_dates.append(month_start_date)
 
     # Make header_dict for header row in new bulletin (inelegant, but sturdy):
-    month_columns = [MONTH_ABBRVS[d.month - 1] + ' ' + str(d.year)[-2:] for d in month_start_dates[:-1]]
+    month_columns = [MONTH_ABBRVS[d.month - 1] + '.' + str(d.year) for d in month_start_dates[:-1]]
     df_bulletin_columns = DF_BULLETIN_COLUMNS_STUB + month_columns
     bulletin_header_labels = NEW_BULLETIN_HEADER_STUB + month_columns
     if len(df_bulletin_columns) != len(bulletin_header_labels):
@@ -621,12 +622,12 @@ def make_new_bulletin(dates, df_fit_results):
         for d in min_max_list:
             this_month_start_date = datetime(d['date'].year,
                                              d['date'].month, 1, 0, 0, 0).replace(tzinfo=timezone.utc)
+            date_string = '(' + str(d['date'].day) + ')'
+            mag_string = ' {0:.1f}'.format(d['mag_pred']) if include_magnitudes is True else ''
             if d['event'] == 'max':
-                behavior[this_month_start_date] = 'MAX(' + str(d['date'].day) + ') ' + \
-                                                  '{0:.1f}'.format(d['mag_pred'])
+                behavior[this_month_start_date] = 'MAX' + date_string + mag_string
             if d['event'] == 'min':
-                behavior[this_month_start_date] = 'min(' + str(d['date'].day) + ') ' + \
-                                                  '{0:.1f}'.format(d['mag_pred'])
+                behavior[this_month_start_date] = 'MIN' + date_string + mag_string
 
         # Fill star's behavior for other months' (with rising, fading, or const.):
         for i_month in range(dates['n_bulletin_months']):
