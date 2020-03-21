@@ -20,7 +20,9 @@ DATA_DIRECTORY = 'C:/Dev/bulletin2/data'
 BULLETIN2018_FILENAME = 'Bulletin2018.csv'
 DF_OBS_FILENAME = 'df_obs.csv'
 DF_NOBS_FILENAME = 'df_nobs.csv'
-NEW_BULLETIN_FILENAME = 'Bulletin_new.csv'  # in format of Bulletin2018.csv above.
+DATES_FILENAME_TEMPLATE = 'Dates_[date].txt'               # [date] to be replaced by '2020-03', e.g.
+NEW_BULLETIN_FILENAME_TEMPLATE = 'LPVbulletin_[date].csv'  # "
+
 NEW_BULLETIN_HEADER_STUB = ['Name', 'RA.hour', 'RA.min', 'RA.sec', 'DECL.deg', 'DECL.min', 'DECL.sec',
                             'Period', 'Range', 'N(obs)']
 DF_BULLETIN_COLUMNS_STUB = ['star_id', 'ra_hour', 'ra_min', 'ra_sec', 'decl_deg', 'decl_min', 'decl_sec',
@@ -96,16 +98,27 @@ PERIOD_BEST_SHIFT_TO_FIT_ONLY_SHIFT = 0.6  # fraction of fit period shift to act
 #
 # =====================================================================================================
 #
-#   Workflow [after 2020-03-19 revisions]:
+#   Workflow [version 1.01, 2020-03-21]:
 #
 #   * First, ensure old Bulletin2018.csv is present (mostly to have list of target stars).
 #   1. dates = u.calc_dates(new_bulletin_start='20200301', n_bulletin_months=MAX_BULLETIN_MONTHS)  # dict
 #   2. u.capture_vsx_data(dates)  # writes df_obs.csv and df_nobs.csv.
 #   3. df_fit_results = u.process_all_stars(dates)
-#   4. u.make_new_bulletin(dates, df_fit_results)
+#   4a. u.make_new_bulletin(dates, df_fit_results)  # to include magnitudes
+#   4b. u.make_new_bulletin(dates, df_fit_results, include_magnitudes=False)  # to omit magnitudes
+#
+#   or just run: u.do_it_all('202003', 10)
 #
 # =====================================================================================================
 # =====================================================================================================
+
+
+def do_it_all(new_bulletin_start, n_bulletin_months):
+    dates = calc_dates(new_bulletin_start, n_bulletin_months)
+    capture_vsx_data(dates)
+    df_fit_results = process_all_stars(dates)
+    make_new_bulletin(dates, df_fit_results, include_magnitudes=True)
+    make_new_bulletin(dates, df_fit_results, include_magnitudes=False)
 
 
 def calc_dates(new_bulletin_start, n_bulletin_months=MAX_BULLETIN_MONTHS):
@@ -128,6 +141,7 @@ def calc_dates(new_bulletin_start, n_bulletin_months=MAX_BULLETIN_MONTHS):
         exit(0)
     year_start = int(start[0:4])
     month_start = int(start[4:6])
+    date_string = '-'.join([start[0:4], start[4:6]])  # '2020-03', e.g. for use in filenames.
 
     # Make utc_bulletin_start (always 1st of month) & validate it:
     utc_bulletin_start = datetime(year_start, month_start, 1, 0, 0, 0).replace(tzinfo=timezone.utc)
@@ -150,7 +164,7 @@ def calc_dates(new_bulletin_start, n_bulletin_months=MAX_BULLETIN_MONTHS):
     nobs_start = datetime(nobs_end.year - 1, nobs_end.month, 1, 0, 0, 0).replace(tzinfo=timezone.utc)
 
     # Make and return dictionary of all dates (datetimes in UTC) and related data:
-    bulletin_filename = ('bulletin_' + '-'.join([start[0:4], start[4:6]]) + '.csv')
+    bulletin_filename = NEW_BULLETIN_FILENAME_TEMPLATE.replace('[date]', date_string)
     dates = dict([('bulletin_start', utc_bulletin_start),
                   ('bulletin_end', utc_bulletin_end),
                   ('bulletin_filename', bulletin_filename),  # e.g., 'bulletin_202003.csv'.
@@ -160,13 +174,20 @@ def calc_dates(new_bulletin_start, n_bulletin_months=MAX_BULLETIN_MONTHS):
                   ('jd0', jd_from_datetime_utc(utc0)),
                   ('nobs_start', nobs_start),
                   ('nobs_end', nobs_end)])
-    print('NEW BULLETIN will cover', str(n_bulletin_months), 'months from',
-          utc_bulletin_start.date(), 'through',
-          (utc_bulletin_end - timedelta(days=1)).date())
-    print('   Fit on data through', fit_end_date.date())
-    print('   Obs count for period', nobs_start.date(), 'through', (nobs_end - timedelta(days=1)).date())
-    print('   Output to file:', os.path.join(DATA_DIRECTORY, bulletin_filename).replace('\\', '/'))
-    print('\nNext: u.capture_vsx_data(dates)')
+    lines = ['NEW BULLETIN will cover ' + str(n_bulletin_months) + ' months from ' +
+             str(utc_bulletin_start.date()) + ' through ' +
+             str((utc_bulletin_end - timedelta(days=1)).date()),
+             '   Fit on data through ' + str(fit_end_date.date()),
+             '   Obs count for period ' + str(nobs_start.date()) + ' through ' +
+             str((nobs_end - timedelta(days=1)).date()),
+             '   Output to file:' + os.path.join(DATA_DIRECTORY, bulletin_filename).replace('\\', '/')]
+    lines = '\n'.join(lines)
+
+    dates_filename = DATES_FILENAME_TEMPLATE.replace('[date]', date_string)
+    fullpath = os.path.join(DATA_DIRECTORY, dates_filename)
+    with open(fullpath, 'w') as f:
+        f.writelines(lines)
+    print('\n', lines, '\nNext: u.capture_vsx_data(dates)')
     return dates
 
 
@@ -670,7 +691,12 @@ def make_new_bulletin(dates, df_fit_results, include_magnitudes=True):
     # df_new_bulletin = df_new_bulletin.set_index('star_id', drop=False)
 
     # Write the dataframe to demo .csv file:
-    fullpath = os.path.join(DATA_DIRECTORY, dates['bulletin_filename'])
+    if include_magnitudes is True:
+        bulletin_filename = dates['bulletin_filename']  # e.g., 'LPVbulletin_2020-03.csv'
+    else:
+        parts = dates['bulletin_filename'].rsplit('.', maxsplit=1) + ['']
+        bulletin_filename = parts[0] + '_nomags.' + parts[1]  # e.g., 'LPVbulletin_2020-03_nomags.csv'
+    fullpath = os.path.join(DATA_DIRECTORY, bulletin_filename)
     df_new_bulletin.to_csv(fullpath, sep=';', quotechar='"', encoding='UTF-8',
                            header=False, quoting=2,
                            index=False)  # quoting=2-->quotes around non-numerics.
