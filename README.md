@@ -1,9 +1,10 @@
 #  bulletin2
-Demonstration code for an online resumption and extension of the venerable LPV Bulletins
-previously published by the [American Association of Variable Star Observers (AAVSO)](https://aavso.org).
+Python code for an online resumption 2020- of the venerable LPV (Long-period variable) Bulletins
+published through 2018 by the
+[American Association of Variable Star Observers (AAVSO)](https://aavso.org).
 
 AAVSO has a strong interest in informing LPV observers, so that they can make the most
-scientifically useful observations in line with their observing preferences.
+scientifically useful observations that satisfy their observing preferences.
 There are two obvious approaches: 
 1. Directly replace the 
 previous annual LPV Bulletins. Observers download this once per 
@@ -13,238 +14,153 @@ through a regular browser, whenever they want.
 Ideally, they would receive information only on target stars suited to their 
 geographic location and observing abilities or preferences. 
 
-Both approaches require that the master list of LPVs have each target star's 
-V / Visible magnitude predicted in advance, even if only approximately. 
-But the two approaches' mag-prediction demands differ 
-enough that each needed its own demonstration. 
-Each "static" Bulletin document needs long-term (~15 months') predictions, whereas
-an online tool could have its predictions refreshed monthly, weekly, or even conceivably
-in real time, using all the data received to that moment for the freshest magnitude 
-predictions. 
+**_The code in this repo satisfy 1. above, providing CSV files_** to observers of long-period variable
+stars. These CSV files include the same 379 LPV stars that were included in the last (2018) Bulletin
+produced by AAVSO staff. These new CSV files are semi-colon delimited and may be imported directly
+into Excel, OpenOffice, etc, where all observers may easily screen and sort the stars to
+emphasize those in line with their own geographic locations, telescope properties, etc.
 
-The two automated prediction strategies are quite different.
-Through simulation with existing database data, I have demonstrated that both approaches 
-are feasible. 
+_The previously proposed online tool for same-night LPV predictions and user-screening and -sorting
+has proven too involved for the present. It will probably not be pursued in 2020._
 
-**Both demonstrations are included in this repo.** 
+I (Eric Dose, AAVSO member and active LPV observer) plan to generate these CSV-format Bulletins 
+twice per year and to post them in the AAVSO forums, LPV section. 
+The first Bulletin was posted there March 21 2020; it covers March-December 2020. 
+Based on feedback received from observers, I plan to update the software and produce the next
+Bulletin in June 2020 to cover June 2020-March 2021. 
+If there is sufficient demand, and especially if coverage improves for the historically 
+least-observed stars, then I might increase the frequency of publication to quarterly.
 
 ###  Motivation
  
- For all the 379 LPV (long-period variable) stars in Bulletin 2018, we want to predict the following:
- * minimum and maximum dates and their approximate V-mags during next calendar year,
- * approximate V-mags ON DEMAND, for any star and date, presumably from a future web tool, and
- * ideally, bonus predictions (dates, V-mags) for the entire next year of any star's:
-    - extremely fast mag changes, and
-    - lightcurve fine structure.
+ We want to provide to active LPV observers the following, 
+ for all the 379 LPV (long-period variable) stars in Bulletin 2018, 
+ in a new Bulletin LPV editions:
+ * base information about each star, including RA and Declination, best magnitude-range estimates, and
+ best Period estimates;
+ * minimum and maximum dates during next few months;
+ * number of observations of each star during the previous 12 months; and
+ * magnitudes in V filters for each minimum and maximum date.
     
-All the above is intended to help observers better define the light curve over the next year.
+All the above is intended to help observers better define the best estimated of each LPV
+light curve over the next few months.
  
 ### The lightcurve model
 
-Both demonstrations use exactly the same foundation numerical model for
-the persistent shape of LPV lightcurves, 
-namely a **second-order Fourier** with first-order linear drift,
-thus comprising 6 fitted parameters. 
-We weight more recent observations more heavily 
-as they are certainly more relevant (per obs) to next-year predictions.
+For these new Bulletins, the fundamental numerical model for the persistent shape of LPV
+lightcurves is a **second-order Fourier** with first-order linear drift.
+This model therefore comprises 6 fitted parameters:
+* constant base (average) V magnitude,
+* constant first derivative (dV/dt) of the base magnitude,
+* sine and cosine terms at the fundamental frequency (1/Period), and
+* sine and cosine terms at twice the fundamental.
 
-A star's **LPV period** (on which that star's Fourier series is based) 
-amounts to an additional parameter--unless one fixes it to constant value,
-which proved impossible for two reasons: 
-1. even the best sources of 
-LPV period information are unreliable for perhaps 20% of the listed stars,
-and 
+We do not fit the LPV fundamental Period as a separate parameter.
+Attempts to do so gave unreliable results for two reasons:
+1. Period is an extremely non-linear parameter, which meshes very poorly with the other 6 parameters,
+all of which are perfectly linear in fitting magnitudes; and
 2. LPV periods do change over time scale of years, so that listed
 periods need to be adjusted for stable Fourier fits. 
 Worse, period is an extremely non-linear parameter, 
 so we must fit it indirectly and approximately.
 
-Extensive simulation experiments indicate that 
-both modeling approaches below can signal a LPV's period 
-deviating from the historical by more than perhaps 5%.
-This has two great benefits: signaling a possible model inaccuracy,
-possibly due to insufficient or corrupted input data (previous
-observations), and failing that, the LPV star is marked as having
-unusual, non-periodic behavior and is thus marked as a special
-target for observation through (at least) its next maximum and minimum
-brightness.
+Sometimes even the best documented periods 
+aren't adequate to predict magnitudes or lightcurve shapes. 
+For some stars the Bulletin periods may be wrong, whereas for others the LPVs' periods may 
+actually be changing over a few years.
+For our purposes, the cause doesn't matter: 
+even a 2-5% period error can accumulate to 0.5-1 magnitude
+error when projected forward a year, and that's 
+outside usefulness to the observers relying on the predictions.
 
-#### Demonstration 1 of 2: Make an ANNUAL, STATIC LPV Bulletin table:
+Instead, we iterate the linear fits above with several potential values of the Period, clustered
+around the historical Period as read from the latest AAVSO-produced 2018 Bulletin. 
+This approach has proven numerically stable, and it provides very reasonable estimates of
+the _current_ Period.
 
-_Code file util.py. Primary function: make_new_bulletin()._ 
+### Data used to determine model parameters
 
-This successfully demonstrated the automated production of 
-direct replacements of previous LPV Bulletins.
+For each LPV star in the Bulletin, 
+we first collect from AAVSO's AID all recent data in V-like passbands: V, Visual, and TG, where
+recent is defined here as ending one week before the modeling run (to minimize selection bias in
+very recently reported data), and beginning 5 nominal (2018 Bulletin) Periods before the end date.
+Within the model, we weight more recent observations somewhat more heavily, 
+as they are certainly more relevant (per obs) to next-year predictions.
 
-Previously done manually, the supporting predictions were too laborious
-to continue.
-We've demonstrated here that they can be automated with satisfactory
-precision and accuracy for the vast majority of LPV target stars
-listed in the latest 2018 LPV Bulletin. 
+The 379 LPVs vary extremely widely in their observation coverage: some have a few dozen reported
+magnitudes, others have thousands. 
+This means that the certainty in modeling (and thus in Bulletin mag predictions) varies widely
+as well. 
+The uncertain prediction of low-coverage LPV lightcurves results from that low coverage and is
+not a feature of the current numerical model--indeed, projecting magnitudes from very limited
+historical data would be even more uncertain by any method, and certainly would be worse than
+trying to project via visual inspection, e.g.
 
-Requirements imposed on the predictions supporting this demo were
-extremely severe:
-For the demo predictions over the year 2019, 
-only data through November 30, 2018 was used in fitting.
-This is similar to the previous real-world requirement when 
-previous Bulletins were produced once annually during December 
-for the following calendar year, actually through February of the
-next year still.
+### Workflow for production of new Bulletins
 
-The prediction process for annual, static Bulletins:
+This "bulletin2" repo contains all the code needed to produce new CSV-format LPV bulletins.
 
-* **Collect required data.** At present, that comprises: 
-    - the entire 2018 LPV bulletin in table form, and
-    - observation data from the past 5 LPV cycles (periods).
- 
-* **Model (fit to) the past observation data.** The 
-  fit model is described above, having 6 linear 
-   parameters; they are: 
-    - V mag at JD0 (reference date),
-    - linear V mag drift per year (e.g., negative for slowly brighening star),
-    - First Fourier term sin(phase),
-    - First Fourier term cos(phase),
-    - Second Fourier term sin(2*phase),
-    - Second Fourier term cos(2*phase),
+The workflow comprises running several functions in a specific order. I run them from within
+the Python Console facility in the IDE PyCharm, where they are imported via the statement
 
-  where phase = (JD - JD0) / period.
-  
-* **Adjust each star's model period if needed.** 
-  Sometimes even the best documented periods 
-  aren't adequate to predict 2015-2018 (training data set)
-  *or* 2019 (evaluation set) magnitudes or lightcurve shapes. 
-  For some stars the Bulletin periods may be wrong, whereas for others the LPVs' periods may 
-  actually be changing over a few years.
-  For our purposes, the cause doesn't matter: 
-  even a 2-5% period error can accumulate to 0.5-1 magnitude
-  error when projected forward a year, and that's 
-  outside usefulness to the observers relying on the predictions.
-  
-  And also unfortunately, the period is a very non-linear parameter. Rather than take on non-linear
-  regression and all its stability and accuracy headaches, it's much better just to re-run the 
-  regression with modified periods and see what happens. It's far easier to program, and in fact even
-  repeated linear regressions run much faster than one non-linear fit. So modifying the period in 
-  search of better fits is what we do. If the pattern of fits indicates that a star's Bulletin
-  period is off, that simply renders that star a more valuable target for the next year or two, or at
-  least for the next few maxima.
+import bulletin2.util as u
 
-* **Make the predictions:** For each star, use its best model
-  fit to predict its V magnitude for every day over the next year. 
-  Really. It's blindingly fast on any modern PC or server, 
-  even for hundreds of stars. Yay, linear models.
+so that each function call begins with "u." as seen below.
 
-  From the projected light curves, pick out each star's minima and maxima dates over the next year, 
-  together with their approximate V magnitudes. Add date ranges of special fine structure in the
-  projected light curves, too.
-  Brightly mark stars in probable need of observations, whether from lack of previous coverage or
-  from need to refine their period durations. 
-   
-  Report all this in a customized document that observers can download, most
-  profitably limiting it to their preferred: latitude and viewing altitude, magnitude range,
-  and event type or observation need (minima, maxima). The idea is an on-demand, customized
-  Bulletin with 
+### `u.calc_dates('20200301', 9)`
 
-* **Construct the static Bulletin document:**
-    For the CSV (comma-separated variables) file format, this 
-    reduces to one carefully constructed line of python code
-    calling a pandas DataFrame method. The CSV file is for all practical
-    purposes identical in function and format to the
-    2018 LPV Bulletin CSV still available on the AAVSO website.
+where the first parameter is the desired beginning date (yyyymmdd) of the new Bulletin, 
+and the second
+parameter is the desired length of the new Bulletin in whole calendar months.
 
-    Extending this to a more human-readable HTML format would be
-    a routine exercise in reformatting the same data, and so 
-    was not necessary to this demo. 
+Computes the Bulletin months, the end date for historical data used to
+fit the numerical model (the start data depends on each LPV's nominal period), and the
+months used to compute N(obs), the number of historical observations within the latest year.
 
-_This first demonstration was posted here and signaled to 
-AAVSO mid-November 2019._
+These controlling data are written to a compound variable "dates" used by the succeeding steps.
 
-#### Demonstration 2 of 2: Make SHORT-TERM predictions of LPV (for V/Vis magnitudes ON DEMAND):
+### `u.capture_vsx_data(dates)`
 
-_Code file util.py. Primary code: make_short_pred_demo()._ 
+Collects and organizes all the data needed for modeling and prediction.
+Specifically this function:
+* calculates the begin and end dates for each LPV star
+* downloads each star's historical data from AAVSO's AID 
+(AAVSO International Database) via its VSX (Variable Star Index) API,
+* counts the previous year's V-like observations and writes all stars' N(obs) data
+to a CSV file "df_nobs.csv", and
+* stores all the downloaded observations (about 300,000) for all the stars into 
+one enormous CSV file "df_obs_csv".
 
-This successfully demonstrated that an automated short-term
-prediction engine can deliver satisfactory V/Vis magnitude
-guidance on demand.
+###`u.process_all_stars(dates)`
 
-The next step would be to adapt this modeling and prediction code
-to drive the design and launch of a new web page 
-to guide AAVSO LPV observers' planning of their 
-next month's, next week's, or even same night's LPV observations,
-as suitable to their own geographic location, 
-sky altitude restrictions, preferred magnitude range, etc. 
- 
-The prediction process for on-demand predictions (for web tool): 
+This applies the numerical model and makes future magnitude predictions for all the 379
+LPV stars. The output is written to a large pandas dataframe "df_fit_results" for use by the next step.
 
-Requirements for these shorter-term predictions (perhaps from 2 weeks
-to 2 months) are much easier statistically--but to access these
-statistical gains requires additional computation and code.
+### `make_new_bulletin(dates, df_fit_results, include_magnitudes)`
 
-* **Model by adapting the long-term model (above):** 
+This function actually makes the new Bulletin CSV files.
 
-   The model for these short-term predictions starts with the same model 
-   as for the long-term Bulletin demo (see above).
-   But the short-term model required two modifications:
- 
-   - We averaged the best-fit period and the previously published
-   period to yield the period used in the fit and prediction. 
-   This is a form of statistical regularization, and
-   was found to help stabilize the fits, especially where few
-   recent observations existed or where the period was actually
-   changing.
-    
-   - We adjusted the prediction for account for 
-   recent mag shifts too recent for the long-term model to include.
-   Specifically, we add to the long-term prediction an offset 
-   calculated in this way: for each of the 20 most recent observations,
-   compute the difference between the observed magnitude and the 
-   (long-term model) predicted magnitude, then use the median
-   (not mean, in case of outliers)
-  
-   The basis data set for each short-term model could not extend
-   more recently than the date of the prediction--one cannot use 
-   future data. This can never happen when real predictions are used
-   in an online tool, but a demo that models past predictions
-   must be careful to exclude any data past the targeted prediction 
-   date.
+It uses the fit results from u.process_all_stars(), finds the minima and maxima, organizes the
+results into a large table, and writes the table into the final CSV file. 
 
-* **Make the predictions:** 
+The CSV file will include a magnitude estimate for each min and max only if include_magnitudes is
+set to True. If set to False, the min and max entries will have no magnitude estimates,
+as in the 2018 and earlier Bulletins.
 
-   Thus, for a given short-term prediction date, we restricted
-   the basis data set to observations at least 30 days old. 
-   This is much more restrictive than would be required in a real
-   online tool, which would have access to within the past week.
-   But in case the predictions can only be run monthly (by a 
-   server cron job, e.g.), we enforced this basis-data restriction
-   without exception. 
+For the new Bulletins, we will plan to post both versions. 
+* CCD observers will need the predicted magnitudes to optimal decide exposure times. 
+* Some visual observers may prefer to plan observations without advance knowledge of the
+star's expected brightness.
 
-   For each of the 379 stars in the 2018 LPV Bulletin, a V/Vis
-   magnitude prediction was made for 15 dates in 2019 and early 2020, 
-   spaced by 30 days. This comprised about 5,700 predicted magnitudes. 
-   The basis-data restrictions describe above were applied without
-   exception to ensure that this demo reflects actual performance
-   of any future online tools based on this engine.
+## For the future:
 
-* **Make plots from the predictions:** 
+The CSV-format new Bulletins (with and without magnitude estimates) are complete.
+I do not plan major changes to them in 2020, though corrections and suggestions will be
+addressed as needed.
+The next new Bulletin is expected to launch June 2020 to cover roughly June 2020 - March 2021.
 
-   Then for each star, one plot was made which overlay the 
-   predicted magnitudes (red dots) over all observation data
-   in V, Vis, and TG. With these 379 plots, one can compare at
-   a glance the realistically predicted magnitudes with the since-
-   observed magnitudes through most of 2019.
-   
-   All plots were grouped 12 to a page and included in a PDF
-   document delivered to AAVSO December 7, 2019.    
-
-   These short-term predictions tracked actual 2019 observations very
-   well for the vast majority of stars. There were perhaps a dozen
-   stars for which the predictions were unsatisfactory; this seems
-   to happen when stars change behavior (which is unavoidable, but
-   represents valuable opportunities for future observations),
-   or when there have been very few recent observations (which is
-   unfortunate, but then an online tool is under consideration
-   to remedy exactly that).  
-
-## In conclusion:
+There is another possibility for 2021 or later: an online Bulletin facility,
+presumably on the AAVSO website.
 
 Imagine: a talented observer--whether visual, CCD, or other--wants
 to know "what's up" tonight: what LPVs are available for him to
@@ -265,17 +181,10 @@ the exception of stars that have very few previous observations or which have
 changed their physical behavior. Those deviant situations will always require
 human intervention, **_but also represent the greatest opportunities_**.
 
-These demos are complete, their results are submitted, and 
-I have no more work planned on them.
-
-Should it be decided to restart the LPV Bulletins either as static, periodic
-documents or as an online tool, I stand ready to adapt the computational
-prediction engines described in this repo, 
-working with others who would handle server aspects and web-page front end design.
+Best of luck in all your observing--may your skies be clear.
 
 
-
-                      work completed December 7, 2019
+                      March 23, 2020
                            Eric Dose, Albuquerque, NM USA
                            in support of the American Association of Variable Star Observers
                                           
