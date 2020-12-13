@@ -103,11 +103,27 @@ This "bulletin2" repo contains all the code needed to produce new CSV-format LPV
 The workflow comprises running several functions in a specific order. I run them from within
 the Python Console facility in the IDE PyCharm, where they are imported via the statement
 
-import bulletin2.util as u
+### `import bulletin2.util as u`
 
 so that each function call begins with "u." as seen below.
 
-### `u.calc_dates('20200301', 9)`
+---
+
+**SHORTCUT**: the function call:
+
+### `u.do_it_all(new_bulletin_start, n_bulletin_months)`
+
+for example,
+
+### `u.do_it_all(20201201, 13)`
+
+will do everything. (You'll still need to sanity-check the results.)
+
+---
+
+Otherwise, you'll proceed (as do_it_all() does) with these sequential steps.
+
+### `dates = u.calc_dates('20200301', 9)`
 
 where the first parameter is the desired beginning date (yyyymmdd) of the new Bulletin, 
 and the second
@@ -117,7 +133,8 @@ Computes the Bulletin months, the end date for historical data used to
 fit the numerical model (the start data depends on each LPV's nominal period), and the
 months used to compute N(obs), the number of historical observations within the latest year.
 
-These controlling data are written to a compound variable "dates" used by the succeeding steps.
+These controlling data are written to a dictionary (compound variable) "dates" 
+used by the succeeding steps.
 
 ### `u.capture_vsx_data(dates)`
 
@@ -131,60 +148,54 @@ to a CSV file "df_nobs.csv", and
 * stores all the downloaded observations (about 300,000) for all the stars into 
 one enormous CSV file "df_obs_csv".
 
-###`u.process_all_stars(dates)`
+### `df_fit_results = u.process_all_stars(dates)`
 
 This applies the numerical model and makes future magnitude predictions for all the 379
 LPV stars. The output is written to a large pandas dataframe "df_fit_results" for use by the next step.
 
-### `make_new_bulletin(dates, df_fit_results, include_magnitudes)`
+### `u.make_new_bulletin(dates, df_fit_results)`
+### `u.make_new_bulletin(dates, df_fit_results, include_magnitudes=False)`
 
-This function actually makes the new Bulletin CSV files.
 
-It uses the fit results from u.process_all_stars(), finds the minima and maxima, organizes the
-results into a large table, and writes the table into the final CSV file. 
+This function actually makes the TWO new Bulletin CSV files: the first CSV file
+includes estimated min & max magnitudes, and the second CSV file does not include
+estimated min & max magnitudes but only their dates (for observers who prefer that).
+The CSV files are named, for example, LPVbulletin_2020-03.csv and 
+LPVbulletin_2020-03_nomags.csv.
 
-The CSV file will include a magnitude estimate for each min and max only if include_magnitudes is
+This function uses the fit results from u.process_all_stars(), 
+finds the minima and maxima (and optionally the estimated magnitudes at those dates, 
+organizes the results into a large table, and 
+writes the table into the final CSV file. 
+
+Again, the CSV file will include a magnitude estimate for each min and max 
+only if include_magnitudes is
 set to True. If set to False, the min and max entries will have no magnitude estimates,
 as in the 2018 and earlier Bulletins.
 
-For the new Bulletins, we will plan to post both versions. 
+You'll want to do a sanity check on a few star entries before posting. 
+Especially, you'll want to manually remove from the CSV files any stars that have fewer than
+maybe 10-12 observations over the past 5 years. 
+
+The versions: 
 * CCD observers will need the predicted magnitudes to optimal decide exposure times. 
 * Some visual observers may prefer to plan observations without advance knowledge of the
 star's expected brightness.
 
-## For the future:
+## Project status:
 
-The CSV-format new Bulletins (with and without magnitude estimates) are complete.
-I do not plan major changes to them in 2020, though corrections and suggestions will be
-addressed as needed.
-The next new Bulletin is expected to launch June 2020 to cover roughly June 2020 - March 2021.
-
-There is another possibility for 2021 or later: an online Bulletin facility,
-presumably on the AAVSO website.
-
-Imagine: a talented observer--whether visual, CCD, or other--wants
-to know "what's up" tonight: what LPVs are available for him to
-observe profitably, with the most scientific value.
-
-On the AAVSO website, 
-the new tool takes his location, telescope, size, sky brightness, star-type preferences
-and other data (possibly stored in his profile already), 
-and delivers a listing of targets to go observe tonight, 
-indeed **right now**, together with days since last observed, times that each
-star is available *tonight*, estimated (approximate) magnitude 
-range recommended observing frequency, etc etc. 
-The observer can also change his mind, resubmit, get a refreshed observation roster. 
-
-I recommend this be done. The fit and prediction engines have been demonstrated
-to work at least as well as needed, and the process is entirely automated--with
-the exception of stars that have very few previous observations or which have
-changed their physical behavior. Those deviant situations will always require
-human intervention, **_but also represent the greatest opportunities_**.
+I (Eric Dose) am done with this project.
+ 
+I have posted my last bulletins (Dec 2020-Dec 2021).
+Anyone at AAVSO is welcome to clone this repo, edit it as they see fit,
+and start generating Bulletins.
+If you do so, all future credit as well as responsibility for future Bulletin postings is 
+yours alone.
 
 Best of luck in all your observing--may your skies be clear.
 
 
-                      March 23, 2020
+                      updated December 13, 2020
                            Eric Dose, Albuquerque, NM USA
                            in support of the American Association of Variable Star Observers
                                           

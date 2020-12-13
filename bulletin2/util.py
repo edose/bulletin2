@@ -114,6 +114,10 @@ PERIOD_BEST_SHIFT_TO_FIT_ONLY_SHIFT = 0.6  # fraction of fit period shift to act
 
 
 def do_it_all(new_bulletin_start, n_bulletin_months):
+    """
+    :param new_bulletin_start: date to start next bulletin, e.g. '20200301' or '202003'. [string or int]
+    :param n_bulletin_months: number of months to include in bulletin, <= MAX_BULLETIN_MONTHS. [int]
+    """
     dates = calc_dates(new_bulletin_start, n_bulletin_months)
     capture_vsx_data(dates)
     df_fit_results = process_all_stars(dates)
